@@ -1,0 +1,15 @@
+pilot-bim-installer/
+├── main.py                 # Точка входа
+├── requirements.txt        # Зависимости
+├── screens/
+│   ├── __init__.py
+│   ├── base_screen.py     # Базовый класс для всех экранов
+│   ├── welcome_screen.py  # Экран приветствия
+│   └── os_detection_screen.py  # Экран определения ОС
+├── components/
+│   ├── __init__.py
+│   ├── ui.py              # UI компоненты (кнопки, рамки и т.д.)
+│   └── os_detector.py     # Логика определения ОС
+└── utils/
+    ├── __init__.py
+    └── terminal.py        # Утилиты для работы с терминалом

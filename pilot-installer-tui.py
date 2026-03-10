@@ -3,13 +3,16 @@
 
 """
 Установщик Pilot-BIM для Linux
-Первый экран: приветствие и навигация (исправленная версия с поддержкой мыши)
+Экран определения операционной системы
 """
 
 import curses
 import sys
 import os
 import time
+import subprocess
+import platform
+import distro  # Для детального определения Linux дистрибутивов
 
 class PilotBIMInstaller:
     def __init__(self, stdscr):
@@ -19,7 +22,9 @@ class PilotBIMInstaller:
         self.running = True
         self.needs_redraw = True
         self.last_mouse_event = 0
-        self.mouse_debounce = 0.1  # Защита от множественных событий мыши
+        self.mouse_debounce = 0.1
+        self.current_screen = "os_detection"  # Текущий экран
+        self.os_info = {}  # Информация об ОС
         
         # Настройка цветов
         if curses.has_colors():
@@ -29,12 +34,12 @@ class PilotBIMInstaller:
             curses.init_pair(3, curses.COLOR_CYAN, curses.COLOR_BLACK)   # Заголовок
             curses.init_pair(4, curses.COLOR_YELLOW, curses.COLOR_BLACK) # Инструкции
             curses.init_pair(5, curses.COLOR_RED, curses.COLOR_BLACK)    # Ошибка/Предупреждение
+            curses.init_pair(6, curses.COLOR_GREEN, curses.COLOR_BLACK)  # Успех/Информация
         
-        # Настройка мыши (более простая и надежная)
+        # Настройка мыши
         try:
-            # Включаем только события кликов, без отслеживания движения
             curses.mousemask(curses.BUTTON1_CLICKED | curses.BUTTON1_DOUBLE_CLICKED)
-            curses.mouseinterval(50)  # Интервал для двойного клика в мс
+            curses.mouseinterval(50)
         except:
             pass
             
@@ -44,28 +49,111 @@ class PilotBIMInstaller:
         except:
             pass
         
-        # Включаем специальные режимы
         self.stdscr.keypad(True)
-        self.stdscr.nodelay(False)  # Блокирующий ввод
+        self.stdscr.nodelay(False)
         
         # Для XTerm и совместимых
         if os.environ.get('TERM') in ['xterm', 'xterm-256color', 'rxvt', 'rxvt-unicode']:
-            sys.stdout.write("\033[?1000h")  # Включаем отчет о мыши
-            sys.stdout.write("\033[?1002h")  # Включаем отслеживание движения
-            sys.stdout.write("\033[?1015h")  # Включаем расширенный формат
+            sys.stdout.write("\033[?1000h")
+            sys.stdout.write("\033[?1002h")
+            sys.stdout.write("\033[?1015h")
             sys.stdout.flush()
+        
+        # Определяем ОС при инициализации
+        self.detect_os()
     
-    def __del__(self):
-        """Деструктор для восстановления терминала"""
+    def detect_os(self):
+        """Определяет операционную систему и её версию"""
+        self.os_info = {
+            'system': platform.system(),
+            'release': platform.release(),
+            'version': platform.version(),
+            'machine': platform.machine(),
+            'processor': platform.processor(),
+            'distro': None,
+            'distro_version': None,
+            'distro_codename': None,
+            'docker_supported': False,
+            'docker_compose_supported': False,
+            'install_method': None
+        }
+        
+        # Для Linux систем используем distro для детальной информации
+        if self.os_info['system'] == 'Linux':
+            try:
+                self.os_info['distro'] = distro.name(pretty=True)
+                self.os_info['distro_id'] = distro.id()
+                self.os_info['distro_version'] = distro.version()
+                self.os_info['distro_codename'] = distro.codename()
+                self.os_info['distro_like'] = distro.like()
+            except:
+                # Fallback на чтение /etc/os-release
+                self._parse_os_release()
+        
+        # Определяем метод установки Docker
+        self._determine_install_method()
+    
+    def _parse_os_release(self):
+        """Парсит /etc/os-release как запасной вариант"""
         try:
-            # Отключаем отчет о мыши
-            sys.stdout.write("\033[?1000l")
-            sys.stdout.write("\033[?1002l")
-            sys.stdout.write("\033[?1015l")
-            sys.stdout.write("\033[?1003l")
-            sys.stdout.flush()
+            with open('/etc/os-release', 'r') as f:
+                for line in f:
+                    if '=' in line:
+                        key, value = line.strip().split('=', 1)
+                        value = value.strip('"')
+                        if key == 'NAME':
+                            self.os_info['distro'] = value
+                        elif key == 'VERSION_ID':
+                            self.os_info['distro_version'] = value
+                        elif key == 'VERSION_CODENAME':
+                            self.os_info['distro_codename'] = value
+                        elif key == 'ID':
+                            self.os_info['distro_id'] = value
+                        elif key == 'ID_LIKE':
+                            self.os_info['distro_like'] = value
         except:
             pass
+    
+    def _determine_install_method(self):
+        """Определяет метод установки Docker в зависимости от ОС"""
+        distro_id = self.os_info.get('distro_id', '').lower()
+        distro_like = self.os_info.get('distro_like', '').lower()
+        
+        # Семейство Debian/Ubuntu
+        if distro_id in ['debian', 'ubuntu'] or 'debian' in distro_like:
+            self.os_info['install_method'] = 'apt'
+            self.os_info['docker_supported'] = True
+            self.os_info['docker_compose_supported'] = True
+        
+        # Семейство RHEL/CentOS/Fedora
+        elif distro_id in ['rhel', 'centos', 'fedora'] or 'rhel' in distro_like or 'fedora' in distro_like:
+            self.os_info['install_method'] = 'yum' if distro_id in ['rhel', 'centos'] else 'dnf'
+            self.os_info['docker_supported'] = True
+            self.os_info['docker_compose_supported'] = True
+        
+        # Семейство openSUSE/SUSE
+        elif distro_id in ['opensuse', 'suse'] or 'suse' in distro_like:
+            self.os_info['install_method'] = 'zypper'
+            self.os_info['docker_supported'] = True
+            self.os_info['docker_compose_supported'] = True
+        
+        # Arch Linux
+        elif distro_id in ['arch', 'manjaro'] or 'arch' in distro_like:
+            self.os_info['install_method'] = 'pacman'
+            self.os_info['docker_supported'] = True
+            self.os_info['docker_compose_supported'] = True
+        
+        # Alpine Linux
+        elif distro_id == 'alpine':
+            self.os_info['install_method'] = 'apk'
+            self.os_info['docker_supported'] = True
+            self.os_info['docker_compose_supported'] = False  # Нужна отдельная установка
+        
+        # Неподдерживаемые дистрибутивы
+        else:
+            self.os_info['install_method'] = 'manual'
+            self.os_info['docker_supported'] = False
+            self.os_info['docker_compose_supported'] = False
     
     def safe_addstr(self, y, x, text, attr=0):
         """Безопасный вывод строки с проверкой границ"""
@@ -107,23 +195,87 @@ class PilotBIMInstaller:
         x = max(0, (self.width - len(header)) // 2)
         self.safe_addstr(2, x, header, curses.color_pair(3) | curses.A_BOLD)
     
-    def draw_welcome_message(self):
-        """Рисует приветственное сообщение"""
-        messages = [
-            "Добро пожаловать в программу установки системы Pilot-BIM!",
-            "",
-            "Эта программа поможет вам установить Pilot-BIM",
-            "с использованием Docker-контейнеров.",
-            "",
-            "Для навигации используйте клавиши TAB и стрелки,",
-            "для выбора - ENTER или мышь."
+    def draw_os_detection_screen(self):
+        """Рисует экран определения ОС"""
+        # Заголовок экрана
+        title = " ОПРЕДЕЛЕНИЕ ОПЕРАЦИОННОЙ СИСТЕМЫ "
+        x = max(0, (self.width - len(title)) // 2)
+        self.safe_addstr(4, x, title, curses.color_pair(3) | curses.A_BOLD)
+        
+        start_y = 7
+        line = 0
+        
+        # Основная информация
+        info_lines = [
+            ("Система:", self.os_info.get('system', 'Неизвестно')),
+            ("Версия ядра:", self.os_info.get('release', 'Неизвестно')),
+            ("Архитектура:", self.os_info.get('machine', 'Неизвестно')),
         ]
         
-        start_y = 5
-        for i, msg in enumerate(messages):
-            if start_y + i < self.height - 8:
-                x = max(0, (self.width - len(msg)) // 2)
-                self.safe_addstr(start_y + i, x, msg)
+        # Информация о дистрибутиве для Linux
+        if self.os_info['system'] == 'Linux':
+            if self.os_info.get('distro'):
+                info_lines.append(("Дистрибутив:", self.os_info['distro']))
+            if self.os_info.get('distro_version'):
+                info_lines.append(("Версия:", self.os_info['distro_version']))
+            if self.os_info.get('distro_codename'):
+                info_lines.append(("Кодовое имя:", self.os_info['distro_codename']))
+        
+        for label, value in info_lines:
+            if start_y + line < self.height - 10:
+                # Выводим label
+                self.safe_addstr(start_y + line, 10, label, curses.A_BOLD)
+                # Выводим значение
+                value_x = 25
+                self.safe_addstr(start_y + line, value_x, str(value))
+                line += 1
+        
+        line += 1  # Пустая строка
+        
+        # Информация о поддержке Docker
+        docker_title = "Поддержка Docker:"
+        self.safe_addstr(start_y + line, 10, docker_title, curses.A_BOLD)
+        
+        docker_status = "✓ Поддерживается" if self.os_info['docker_supported'] else "✗ Требуется ручная установка"
+        docker_color = curses.color_pair(6) if self.os_info['docker_supported'] else curses.color_pair(5)
+        self.safe_addstr(start_y + line, 25, docker_status, docker_color)
+        line += 1
+        
+        # Информация о Docker Compose
+        compose_title = "Docker Compose:"
+        self.safe_addstr(start_y + line, 10, compose_title, curses.A_BOLD)
+        
+        if self.os_info['docker_compose_supported']:
+            compose_status = "✓ Поддерживается"
+            compose_color = curses.color_pair(6)
+        else:
+            compose_status = "⚠ Требуется доп. установка"
+            compose_color = curses.color_pair(5)
+        self.safe_addstr(start_y + line, 25, compose_status, compose_color)
+        line += 2
+        
+        # Метод установки
+        if self.os_info.get('install_method'):
+            method_title = "Метод установки:"
+            method_map = {
+                'apt': 'APT (Debian/Ubuntu)',
+                'yum': 'YUM (RHEL/CentOS 7)',
+                'dnf': 'DNF (Fedora/RHEL 8+)',
+                'zypper': 'Zypper (openSUSE)',
+                'pacman': 'Pacman (Arch Linux)',
+                'apk': 'APK (Alpine Linux)',
+                'manual': 'Ручная установка'
+            }
+            method_text = method_map.get(self.os_info['install_method'], self.os_info['install_method'])
+            self.safe_addstr(start_y + line, 10, method_title, curses.A_BOLD)
+            self.safe_addstr(start_y + line, 25, method_text)
+            line += 2
+        
+        # Предупреждение для неподдерживаемых систем
+        if not self.os_info['docker_supported']:
+            warn_msg = "⚠ Внимание: Автоматическая установка Docker может не поддерживаться"
+            x = max(0, (self.width - len(warn_msg)) // 2)
+            self.safe_addstr(start_y + line, x, warn_msg, curses.color_pair(5) | curses.A_BOLD)
     
     def get_button_positions(self):
         """Возвращает координаты кнопок"""
@@ -207,7 +359,7 @@ class PilotBIMInstaller:
     
     def draw_status_line(self):
         """Рисует строку состояния с информацией о размере экрана"""
-        status = f" Размер экрана: {self.width}x{self.height} "
+        status = f" Размер экрана: {self.width}x{self.height} | Экран: определение ОС "
         if self.width < 80 or self.height < 24:
             status = " ⚠ Рекомендуемый размер: 80x24 " + status
             attr = curses.color_pair(5) | curses.A_REVERSE
@@ -217,20 +369,17 @@ class PilotBIMInstaller:
         self.safe_addstr(self.height - 1, 0, status[:self.width - 1], attr)
     
     def handle_mouse(self):
-        """Обрабатывает события мыши без мерцания"""
+        """Обрабатывает события мыши"""
         try:
-            # Защита от множественных событий
             current_time = time.time()
             if current_time - self.last_mouse_event < self.mouse_debounce:
                 return None
                 
             _, mx, my, _, bstate = curses.getmouse()
             
-            # Проверяем только клики левой кнопкой
             if bstate & curses.BUTTON1_CLICKED or bstate & curses.BUTTON1_DOUBLE_CLICKED:
                 button1_rect, button2_rect = self.get_button_positions()
                 
-                # Проверяем клик на кнопках
                 if my == button1_rect['y']:
                     if button1_rect['x1'] <= mx <= button1_rect['x2']:
                         self.last_mouse_event = current_time
@@ -239,7 +388,6 @@ class PilotBIMInstaller:
                         self.last_mouse_event = current_time
                         return "exit"
                 
-                # Клик вне кнопок - меняем фокус без перерисовки
                 if my == button1_rect['y']:
                     if mx < button1_rect['x1']:
                         self.current_button = 0
@@ -264,25 +412,23 @@ class PilotBIMInstaller:
     def run(self):
         """Основной цикл приложения"""
         while self.running:
-            # Проверяем изменение размера
             self.handle_resize()
             
-            # Перерисовываем только при необходимости
             if self.needs_redraw:
-                self.stdscr.erase()  # Используем erase вместо clear для уменьшения мерцания
+                self.stdscr.erase()
                 
                 if self.height >= 20 and self.width >= 60:
                     if self.height >= 24 and self.width >= 80:
                         self.draw_border()
                         self.draw_header()
-                        self.draw_welcome_message()
+                        self.draw_os_detection_screen()
                     else:
                         self.draw_border()
                         warn_msg = "⚠ Рекомендуется увеличить терминал до 80x24"
                         x = max(0, (self.width - len(warn_msg)) // 2)
                         self.safe_addstr(1, x, warn_msg, curses.color_pair(5) | curses.A_BOLD)
                         self.draw_header()
-                        self.draw_welcome_message()
+                        self.draw_os_detection_screen()
                     
                     self.draw_buttons()
                     self.draw_instructions()
@@ -293,7 +439,6 @@ class PilotBIMInstaller:
                 self.stdscr.refresh()
                 self.needs_redraw = False
             
-            # Обработка ввода (блокирующий режим)
             key = self.stdscr.getch()
             
             if key == curses.KEY_MOUSE:
@@ -317,19 +462,17 @@ class PilotBIMInstaller:
                 else:
                     return "exit"
             
-            elif key == ord('q') or key == ord('Q') or key == 27:  # ESC
+            elif key == ord('q') or key == ord('Q') or key == 27:
                 return "exit"
 
 def main(stdscr):
     """Основная функция"""
-    # Очищаем экран при старте
     stdscr.clear()
     stdscr.refresh()
     
     installer = PilotBIMInstaller(stdscr)
     result = installer.run()
     
-    # Очищаем экран перед выходом
     stdscr.clear()
     stdscr.refresh()
     
@@ -340,24 +483,27 @@ def main(stdscr):
         stdscr.refresh()
         stdscr.getch()
     elif result == "exit":
-        # Показываем сообщение о выходе
         stdscr.addstr(0, 0, "Выход из программы...")
         stdscr.refresh()
         curses.napms(1000)
 
 if __name__ == "__main__":
+    # Убедимся, что установлен пакет distro
     try:
-        # Сохраняем настройки терминала
+        import distro
+    except ImportError:
+        print("Установка зависимостей...")
+        os.system("pip3 install distro")
+        import distro
+    
+    try:
         curses.wrapper(main)
     except KeyboardInterrupt:
-        # Восстанавливаем терминал при прерывании
         print("\033[?1000l\033[?1002l\033[?1015l\033[?1003l", end="", flush=True)
         sys.exit(0)
     except Exception as e:
         print(f"\nОшибка: {e}")
-        # Восстанавливаем терминал при ошибке
         print("\033[?1000l\033[?1002l\033[?1015l\033[?1003l", end="", flush=True)
         sys.exit(1)
     finally:
-        # Гарантированное восстановление терминала
         print("\033[?1000l\033[?1002l\033[?1015l\033[?1003l", end="", flush=True)
