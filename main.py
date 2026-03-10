@@ -7,6 +7,7 @@ from screens.welcome_screen import WelcomeScreen
 from screens.os_detection_screen import OSDectionScreen
 from screens.docker_check_screen import DockerCheckScreen
 from screens.docker_install_screen import DockerInstallScreen
+from screens.file_picker_screen import FilePickerScreen
 from utils.terminal import setup_mouse, cleanup_mouse
 
 class PilotBIMInstaller:
@@ -15,6 +16,7 @@ class PilotBIMInstaller:
         self.current_screen = None
         self.running = True
         self.screens = {}
+        self.file_picker_result = None
         
         setup_mouse()
         curses.curs_set(0)
@@ -33,6 +35,11 @@ class PilotBIMInstaller:
         self.screens["os_detection"] = OSDectionScreen(stdscr, self)
         self.screens["docker_check"] = DockerCheckScreen(stdscr, self)
         self.screens["docker_install"] = DockerInstallScreen(stdscr, self)
+        self.screens["file_picker"] = FilePickerScreen(
+            stdscr, self,
+            filter_extensions=None,          # показываем все файлы
+            title="Выберите файл лицензии Pilot"
+        )
         
         self.current_screen = self.screens["welcome"]
     
@@ -47,24 +54,16 @@ class PilotBIMInstaller:
             if result == "exit":
                 self.running = False
             elif result == "next":
-                # Определяем, какой экран следующий
                 if isinstance(self.current_screen, WelcomeScreen):
                     self.switch_screen("os_detection")
                 elif isinstance(self.current_screen, OSDectionScreen):
                     self.switch_screen("docker_check")
-                elif isinstance(self.current_screen, DockerCheckScreen):
-                    # Если нужно установить Docker, переходим на экран установки
-                    if hasattr(self.current_screen, 'need_install') and self.current_screen.need_install:
-                        self.switch_screen("docker_install")
-                    else:
-                        # Если Docker уже установлен, можно перейти дальше (заглушка)
-                        pass
                 elif isinstance(self.current_screen, DockerInstallScreen):
-                    # После установки возвращаемся на проверку
                     self.switch_screen("docker_check")
             elif result == "install":
-                # Специальный сигнал для запуска установки
                 self.switch_screen("docker_install")
+            elif result == "back":
+                self.switch_screen("docker_check")
     
     def quit(self):
         self.running = False

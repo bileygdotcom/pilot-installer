@@ -13,14 +13,12 @@ class DockerCheckScreen(BaseScreen):
         super().__init__(stdscr, app)
         self.docker_installed = False
         self.compose_installed = False
-        self.need_install = False  # Флаг для main
+        self.need_install = False
         self.check_docker()
         self.update_buttons()
     
     def check_docker(self):
-        """Проверяет наличие docker и docker-compose"""
         self.docker_installed = shutil.which("docker") is not None
-        # Проверяем docker-compose (отдельно или как плагин)
         self.compose_installed = (shutil.which("docker-compose") is not None or
                                   self._check_compose_plugin())
     
@@ -33,7 +31,6 @@ class DockerCheckScreen(BaseScreen):
             return False
     
     def update_buttons(self):
-        """Обновляет кнопки в зависимости от статуса"""
         if self.docker_installed and self.compose_installed:
             self.buttons = [
                 Button(0, "[ Далее ]", "continue"),
@@ -55,7 +52,6 @@ class DockerCheckScreen(BaseScreen):
         start_y = 7
         line = 0
         
-        # Docker
         docker_label = "Docker:"
         safe_addstr(self.stdscr, start_y + line, 10, docker_label, curses.A_BOLD)
         if self.docker_installed:
@@ -67,7 +63,6 @@ class DockerCheckScreen(BaseScreen):
         safe_addstr(self.stdscr, start_y + line, 28, status, color)
         line += 2
         
-        # Docker Compose
         compose_label = "Docker Compose:"
         safe_addstr(self.stdscr, start_y + line, 10, compose_label, curses.A_BOLD)
         if self.compose_installed:
@@ -79,7 +74,6 @@ class DockerCheckScreen(BaseScreen):
         safe_addstr(self.stdscr, start_y + line, 28, status, color)
         line += 3
         
-        # Информационное сообщение
         if not (self.docker_installed and self.compose_installed):
             msg = "Для работы Pilot-BIM необходимы Docker и Docker Compose."
             x = max(0, (self.width - len(msg)) // 2)
@@ -90,8 +84,10 @@ class DockerCheckScreen(BaseScreen):
             safe_addstr(self.stdscr, start_y + line, x, msg2)
     
     def on_continue(self):
-        # Если всё установлено, переходим дальше (пока заглушка)
-        return "next"
+        """Переход к выбору файла лицензии, если Docker уже установлен"""
+        if self.docker_installed and self.compose_installed:
+            self.app.switch_screen("file_picker")
+        return None   # не передаём управление в main, т.к. сами переключили экран
     
     def get_screen_name(self):
         return "Проверка Docker"
