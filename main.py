@@ -9,6 +9,7 @@ from screens.docker_check_screen import DockerCheckScreen
 from screens.docker_install_screen import DockerInstallScreen
 from screens.file_picker_screen import FilePickerScreen
 from utils.terminal import setup_mouse, cleanup_mouse
+from screens.license_confirm_screen import LicenseConfirmScreen
 
 class PilotBIMInstaller:
     def __init__(self, stdscr):
@@ -17,6 +18,7 @@ class PilotBIMInstaller:
         self.running = True
         self.screens = {}
         self.file_picker_result = None
+        self.license_file_path = None
         
         setup_mouse()
         curses.curs_set(0)
@@ -40,6 +42,7 @@ class PilotBIMInstaller:
             filter_extensions=None,          # показываем все файлы
             title="Выберите файл лицензии Pilot"
         )
+        self.screens["license_confirm"] = LicenseConfirmScreen(stdscr, self)
         
         self.current_screen = self.screens["welcome"]
     

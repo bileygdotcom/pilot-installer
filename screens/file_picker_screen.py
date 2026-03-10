@@ -30,9 +30,9 @@ class FilePickerScreen(BaseScreen):
         self._last_click_time = 0
         self._last_click_index = -1
 
-        # Кнопки: "Выбрать" изначально неактивна
+        # Кнопки: "Установить лицензию"
         self.buttons = [
-            Button(0, "[ Выбрать ]", "select", enabled=False),
+            Button(0, "[ Установить лицензию ]", "select", enabled=False),
             Button(1, "[ Отмена ]", "cancel", enabled=True)
         ]
         self.current_button = 0
@@ -86,7 +86,7 @@ class FilePickerScreen(BaseScreen):
         self._update_select_button_state()
 
     def _update_select_button_state(self):
-        """Обновляет состояние кнопки 'Выбрать' в зависимости от выбранного элемента"""
+        """Обновляет состояние кнопки 'Установить лицензию' в зависимости от выбранного элемента"""
         if self.files and not self.is_dir[self.selected_index]:
             self.buttons[0].enabled = True
         else:
@@ -180,7 +180,7 @@ class FilePickerScreen(BaseScreen):
         return f"{size:.1f} TB"
 
     def handle_mouse(self):
-        """Полностью обрабатывает события мыши (список и кнопки)"""
+        """Обрабатывает события мыши, включая двойной клик по файлам"""
         try:
             _, mx, my, _, bstate = curses.getmouse()
             current_time = time.time()
@@ -193,10 +193,10 @@ class FilePickerScreen(BaseScreen):
                         if self.buttons[i].enabled:
                             self.current_button = i
                             self.needs_redraw = True
-                            # Если нажата кнопка "Выбрать", сохраняем выбранный файл
+                            # Если нажата кнопка "Установить лицензию", сохраняем выбранный файл
                             if self.buttons[i].action == "select":
                                 if self.files and not self.is_dir[self.selected_index]:
-                                    self.app.file_picker_result = os.path.join(
+                                    self.app.license_file_path = os.path.join(
                                         self.current_path, self.files[self.selected_index]
                                     )
                             return self.buttons[i].action
@@ -221,7 +221,6 @@ class FilePickerScreen(BaseScreen):
                     self._last_click_index = index
 
                     if is_double_click:
-                        # Двойной клик
                         if self.is_dir[index]:
                             # Переход в папку
                             full = os.path.join(self.current_path, self.files[index])
@@ -235,18 +234,17 @@ class FilePickerScreen(BaseScreen):
                             self.needs_redraw = True
                             return None
                         else:
-                            # Выбор файла
+                            # Двойной клик по файлу — выбираем
                             self.selected_index = index
                             if self.buttons[0].enabled:
                                 full = os.path.join(self.current_path, self.files[index])
-                                self.app.file_picker_result = full
-                                #return self.handle_action("select")
-                                return "back"  # немедленный переход
+                                self.app.license_file_path = full
+                                return self.handle_action("select")
                     else:
                         # Одиночный клик — выделяем элемент
                         self.selected_index = index
                         self._update_select_button_state()
-                        self.focus_mode = 0  # фокус на списке
+                        self.focus_mode = 0
                         self.needs_redraw = True
                         return None
 
@@ -308,7 +306,7 @@ class FilePickerScreen(BaseScreen):
                     self.needs_redraw = True
                 else:
                     if self.buttons[0].enabled:
-                        self.app.file_picker_result = full
+                        self.app.license_file_path = full
                         return self.handle_action("select")
         elif key in (127, curses.KEY_BACKSPACE, 8):  # Backspace
             parent = os.path.dirname(self.current_path)
@@ -322,11 +320,13 @@ class FilePickerScreen(BaseScreen):
 
     def handle_action(self, action):
         if action == "cancel":
-            self.app.file_picker_result = None
+            self.app.license_file_path = None
             return "back"
         elif action == "select":
             if self.files and not self.is_dir[self.selected_index]:
-                return "back"
+                # Вместо возврата "back" переходим на экран подтверждения лицензии
+                self.app.switch_screen("license_confirm")
+                return None
         return None
 
     def get_screen_name(self):
