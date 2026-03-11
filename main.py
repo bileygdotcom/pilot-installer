@@ -10,6 +10,9 @@ from screens.docker_install_screen import DockerInstallScreen
 from screens.file_picker_screen import FilePickerScreen
 from utils.terminal import setup_mouse, cleanup_mouse
 from screens.license_confirm_screen import LicenseConfirmScreen
+from screens.components_selection_screen import ComponentsSelectionScreen
+from screens.port_assignment_screen import PortAssignmentScreen
+
 
 class PilotBIMInstaller:
     def __init__(self, stdscr):
@@ -43,8 +46,10 @@ class PilotBIMInstaller:
             title="Выберите файл лицензии Pilot"
         )
         self.screens["license_confirm"] = LicenseConfirmScreen(stdscr, self)
-        
+        self.screens["components_selection"] = ComponentsSelectionScreen(stdscr, self)
         self.current_screen = self.screens["welcome"]
+        self.screens["port_assignment"] = PortAssignmentScreen(stdscr, self)
+        
     
     def switch_screen(self, screen_name):
         if screen_name in self.screens:

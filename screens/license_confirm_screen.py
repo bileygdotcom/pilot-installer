@@ -124,7 +124,7 @@ class LicenseConfirmScreen(BaseScreen):
     def handle_action(self, action):
         if action == "continue":
             # Переход к следующему шагу (замените на нужный экран)
-            self.app.switch_screen("docker_check")
+            self.app.switch_screen("components_selection")
             return None
         elif action == "exit":
             return "exit"
