@@ -6,7 +6,7 @@ from screens.base_screen import BaseScreen
 from components.ui import Button
 from utils.terminal import safe_addstr
 
-class DBExistingScreen(BaseScreen):
+class DbExistingScreen(BaseScreen):
     """Экран выбора существующей базы данных (заглушка)."""
     def __init__(self, stdscr, app):
         super().__init__(stdscr, app)

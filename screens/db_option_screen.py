@@ -7,7 +7,7 @@ from screens.base_screen import BaseScreen
 from components.ui import Button
 from utils.terminal import safe_addstr
 
-class DBOptionScreen(BaseScreen):
+class DbOptionScreen(BaseScreen):
     """
     Экран выбора опции работы с базой данных.
     Радиокнопки: загрузить демо-базу или выбрать существующую.
@@ -19,6 +19,7 @@ class DBOptionScreen(BaseScreen):
             ("Выбрать существующую базу", False)
         ]
         self.selected_index = 0  # индекс выбранной опции (для радиокнопок)
+        self.selected_option = 0
         self.focus_mode = 0      # 0 - список, 1 - кнопки
 
         # Для мыши
@@ -26,7 +27,7 @@ class DBOptionScreen(BaseScreen):
         self._last_click_index = -1
 
         self.buttons = [
-            Button(0, "[ Выбрать ]", "continue", enabled=True),
+            Button(0, "[ Выбрать ]", "select", enabled=True),
             Button(1, "[ Выход ]", "exit", enabled=True)
         ]
         self.current_button = 0
@@ -143,12 +144,12 @@ class DBOptionScreen(BaseScreen):
             self.options[i] = (self.options[i][0], i == self.selected_index)
 
     def handle_action(self, action):
-        if action == "continue":
-            # Определяем, какая опция выбрана
-            selected_text = self.options[self.selected_index][0]
-            if "демонстрационную" in selected_text:
+        if action == "select":
+            if self.selected_option == 0:
+                # Переход на экран загрузки демо-базы
                 self.app.switch_screen("db_demo")
-            else:
+            elif self.selected_option == 1:
+                # Переход на экран выбора существующей базы (пока заглушка)
                 self.app.switch_screen("db_existing")
             return None
         elif action == "exit":
