@@ -12,7 +12,9 @@ from utils.terminal import setup_mouse, cleanup_mouse
 from screens.license_confirm_screen import LicenseConfirmScreen
 from screens.components_selection_screen import ComponentsSelectionScreen
 from screens.port_assignment_screen import PortAssignmentScreen
-
+from screens.db_option_screen import DBOptionScreen
+from screens.db_demo_screen import DBDemoScreen
+from screens.db_existing_screen import DBExistingScreen
 
 class PilotBIMInstaller:
     def __init__(self, stdscr):
@@ -54,7 +56,9 @@ class PilotBIMInstaller:
         self.screens["components_selection"] = ComponentsSelectionScreen(stdscr, self)
         self.current_screen = self.screens["welcome"]
         self.screens["port_assignment"] = PortAssignmentScreen(stdscr, self)
-
+        self.screens["db_option"] = DBOptionScreen(stdscr, self)
+        self.screens["db_demo"] = DBDemoScreen(stdscr, self)
+        self.screens["db_existing"] = DBExistingScreen(stdscr, self)
     
     def switch_screen(self, screen_name):
         if screen_name in self.screens:
