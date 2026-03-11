@@ -22,6 +22,11 @@ class PilotBIMInstaller:
         self.screens = {}
         self.file_picker_result = None
         self.license_file_path = None
+
+        # Данные, передаваемые между экранами
+        self.license_file_path = None
+        self.selected_components = []
+        self.assigned_ports = {}
         
         setup_mouse()
         curses.curs_set(0)
@@ -49,11 +54,12 @@ class PilotBIMInstaller:
         self.screens["components_selection"] = ComponentsSelectionScreen(stdscr, self)
         self.current_screen = self.screens["welcome"]
         self.screens["port_assignment"] = PortAssignmentScreen(stdscr, self)
-        
+
     
     def switch_screen(self, screen_name):
         if screen_name in self.screens:
             self.current_screen = self.screens[screen_name]
+            self.current_screen.on_enter()   # <-- важно для обновления данных
             self.current_screen.refresh()
     
     def run(self):
