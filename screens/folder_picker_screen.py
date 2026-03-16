@@ -4,16 +4,17 @@
 import curses
 import os
 import time
+import yaml
 from screens.base_screen import BaseScreen
 from components.ui import Button
 from utils.terminal import safe_addstr
 
 class FolderPickerScreen(BaseScreen):
     """
-    Экран выбора папки (только директории) с навигацией по файловой системе.
-    Аналог FilePickerScreen, но показывает только папки и кнопка активна всегда.
+    Экран выбора папки (только директории) для размещения стека Pilot.
+    После выбора генерирует docker-compose.yml в папке /имя_стека и переходит на экран подтверждения.
     """
-    def __init__(self, stdscr, app, start_path=None, title="Выберите папку"):
+    def __init__(self, stdscr, app, start_path=None, title="Выбор папки стека"):
         super().__init__(stdscr, app)
         self.title = title
         self.start_path = start_path or os.path.expanduser("~")
@@ -29,9 +30,9 @@ class FolderPickerScreen(BaseScreen):
         self._last_click_time = 0
         self._last_click_index = -1
 
-        # Кнопки: "Выбрать" (активна всегда, если есть папки) и "Отмена"
+        # Кнопки: "Выбрать" (активна при наличии папок) и "Отмена"
         self.buttons = [
-            Button(0, "[ Выбрать ]", "select", enabled=True),
+            Button(0, "[ Выбрать ]", "select", enabled=False),
             Button(1, "[ Отмена ]", "cancel", enabled=True)
         ]
         self.current_button = 0
@@ -98,17 +99,21 @@ class FolderPickerScreen(BaseScreen):
 
     def draw_content(self):
         """Отрисовывает содержимое экрана"""
-        # Заголовок
-        safe_addstr(self.stdscr, 2, 2, self.title, curses.color_pair(3) | curses.A_BOLD)
+        # Подзаголовок (под основным заголовком BaseScreen)
+        subtitle = "Выбор папки стека серверных компонентов Pilot"
+        x = max(0, (self.width - len(subtitle)) // 2)
+        safe_addstr(self.stdscr, 3, x, subtitle, curses.color_pair(3) | curses.A_BOLD)
 
-        # Текущий путь
-        path_display = self.current_path
+        # Полный путь с именем стека
+        stack_name = getattr(self.app, 'stack_name', 'pilot-stack')
+        full_path = os.path.join(self.current_path, stack_name)
+        path_display = full_path
         if len(path_display) > self.width - 10:
             path_display = "..." + path_display[-(self.width-13):]
-        safe_addstr(self.stdscr, 4, 2, "Путь: " + path_display)
+        safe_addstr(self.stdscr, 5, 4, "Папка стека: " + path_display)
 
         # Список папок
-        list_start_y = 6
+        list_start_y = 7
         list_height = self._get_list_height()
         end_idx = min(len(self.files), self.scroll_offset + list_height)
 
@@ -150,27 +155,21 @@ class FolderPickerScreen(BaseScreen):
             for i, pos in enumerate(button_positions):
                 if my == pos['y'] and pos['x1'] <= mx <= pos['x2']:
                     if bstate & (curses.BUTTON1_CLICKED | curses.BUTTON1_DOUBLE_CLICKED):
-                        #if self.buttons[i].enabled:
-                        self.current_button = i
-                        self.focus_mode = 1
-                        self.needs_redraw = True
-                        # отладочный вывод
-                        #with open("/tmp/pilot_debug.log", "a") as f:
-                            #f.write(f"Клик по кнопке {i}, действие {self.buttons[i].action}\n")
-                        return self.buttons[i].action
-                        #return self.buttons[i].action
-                    
+                        if self.buttons[i].enabled:
+                            self.current_button = i
+                            self.focus_mode = 1
+                            self.needs_redraw = True
+                            return self.buttons[i].action
                     return None
 
             # Список
-            list_start_y = 6
+            list_start_y = 7
             list_height = self._get_list_height()
             list_end_y = list_start_y + list_height
 
             if list_start_y <= my < list_end_y and self.files:
                 index = self.scroll_offset + (my - list_start_y)
                 if 0 <= index < len(self.files):
-                    # Защита от повторных событий
                     if current_time - self._last_click_time < 0.1 and index == self._last_click_index:
                         return None
                     self._last_click_time = current_time
@@ -179,7 +178,6 @@ class FolderPickerScreen(BaseScreen):
                     if bstate & (curses.BUTTON1_CLICKED | curses.BUTTON1_DOUBLE_CLICKED):
                         self.selected_index = index
                         self.needs_redraw = True
-                        # Двойной клик по папке — переход внутрь
                         if bstate & curses.BUTTON1_DOUBLE_CLICKED:
                             self._enter_folder(index)
             return None
@@ -199,6 +197,45 @@ class FolderPickerScreen(BaseScreen):
         except PermissionError:
             self.message = "Нет доступа"
         self.needs_redraw = True
+
+    def _generate_compose_file(self):
+        """Генерирует docker-compose.yml в папке /имя_стека внутри выбранной папки."""
+        stack_name = getattr(self.app, 'stack_name', 'pilot-stack')
+        target_dir = os.path.join(self.current_path, stack_name)
+        os.makedirs(target_dir, exist_ok=True)
+        self.app.compose_dir = target_dir
+
+        ports = getattr(self.app, 'assigned_ports', {})
+        
+        # Определяем путь к базам
+        if hasattr(self.app, 'selected_demo_db') and self.app.selected_demo_db:
+            db_volume = "/usr/share/ascon/databases/Databases"
+        else:
+            db_volume = os.path.dirname(self.app.existing_db_path) if getattr(self.app, 'existing_db_path', None) else "/usr/share/ascon/databases"
+
+        compose = {
+            'services': {
+                'pilot-server': {
+                    'image': 'registry.ascon.ru/project/pilotdev/pilot/pilot-server:latest',
+                    'container_name': f"{stack_name}_pilot-server",
+                    'hostname': 'pilot-server',
+                    'restart': 'unless-stopped',
+                    'ports': [f"{ports.get('Pilot-Server', 5551)}:5545"],
+                    'volumes': [
+                        '/usr/share/ascon/.aspnet/pilot-server:/root/.aspnet',
+                        '/usr/share/ascon/logs/pilot-server:/App/logs',
+                        '/usr/share/ascon/pilot-server/settings:/usr/share/ascon/pilot-server/settings',
+                        f"{db_volume}:/usr/share/ascon/databases",
+                        '/usr/share/ASCON:/usr/share/ASCON'
+                    ],
+                    'entrypoint': ["/App/Ascon.Pilot.Daemon", "/usr/share/ascon/pilot-server/settings/settings.xml"]
+                }
+            }
+        }
+        
+        file_path = os.path.join(target_dir, 'docker-compose.yml')
+        with open(file_path, 'w') as f:
+            yaml.dump(compose, f, default_flow_style=False, sort_keys=False)
 
     def handle_input(self):
         self.handle_resize()
@@ -249,20 +286,12 @@ class FolderPickerScreen(BaseScreen):
 
     def handle_action(self, action):
         if action == "select":
-            # Возвращаем выбранную папку
-            self.app.selected_folder = self.current_path
-            # Создаём подпапку с именем стека
-            stack_name = getattr(self.app, 'stack_name', 'pilot-stack')
-            target_dir = os.path.join(self.current_path, stack_name)
             try:
-                os.makedirs(target_dir, exist_ok=True)
-                self.app.compose_dir = target_dir
+                self._generate_compose_file()
+                self.app.switch_screen("compose_created")
             except Exception as e:
-                self.message = f"Ошибка создания папки: {e}"
+                self.message = f"Ошибка: {e}"
                 self.needs_redraw = True
-                return None
-            # Переход к следующему экрану (заглушка)
-            self.app.switch_screen("welcome")
             return None
         elif action == "cancel":
             return "back"
