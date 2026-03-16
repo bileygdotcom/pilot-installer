@@ -199,7 +199,7 @@ class StackNameScreen(BaseScreen):
             # Сохраняем имя стека в app
             self.app.stack_name = self.stack_name
             # Пока следующего экрана нет, переходим на db_option (заглушка)
-            self.app.switch_screen("db_option")
+            self.app.switch_screen("folder_picker")
             return None
         elif action == "exit":
             return "exit"
