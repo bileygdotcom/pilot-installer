@@ -16,6 +16,7 @@ from screens.db_option_screen import DbOptionScreen
 from screens.db_demo_screen import DbDemoScreen
 from screens.db_existing_screen import DbExistingScreen
 from screens.admin_creation_screen import AdminCreationScreen
+from screens.stack_name_screen import StackNameScreen
 
 
 class PilotBIMInstaller:
@@ -62,6 +63,8 @@ class PilotBIMInstaller:
         self.screens["db_demo"] = DbDemoScreen(stdscr, self)
         self.screens["db_existing"] = DbExistingScreen(stdscr, self)
         self.screens["admin_creation"] = AdminCreationScreen(stdscr, self)
+        self.screens["stack_name"] = StackNameScreen(stdscr, self)
+
     
     def switch_screen(self, screen_name):
         if screen_name in self.screens:

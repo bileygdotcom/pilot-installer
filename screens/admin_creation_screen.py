@@ -249,7 +249,7 @@ class AdminCreationScreen(BaseScreen):
             # Сохраняем данные в app
             self.app.admin_credentials = self.credentials
             # Переход к следующему экрану (замените на нужный)
-            self.app.switch_screen("db_option")
+            self.app.switch_screen("stack_name")
             return None
         elif action == "exit":
             return "exit"
