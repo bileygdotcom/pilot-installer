@@ -213,10 +213,12 @@ class FolderPickerScreen(BaseScreen):
         else:
             db_volume = os.path.dirname(self.app.existing_db_path) if getattr(self.app, 'existing_db_path', None) else "/usr/share/ascon/databases"
 
+        tag = getattr(self.app, 'image_tag', 'latest')
         compose = {
             'services': {
-                'pilot-server': {
-                    'image': 'registry.ascon.ru/project/pilotdev/pilot/pilot-server:latest',
+                'pilot-server': {                 
+                    'image': f'registry.ascon.ru/project/pilotdev/pilot/pilot-server:{tag}',
+                    #'image': 'registry.ascon.ru/project/pilotdev/pilot/pilot-server:latest',
                     'container_name': f"{stack_name}_pilot-server",
                     'hostname': 'pilot-server',
                     'restart': 'unless-stopped',

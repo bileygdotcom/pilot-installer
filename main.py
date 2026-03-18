@@ -19,6 +19,7 @@ from screens.admin_creation_screen import AdminCreationScreen
 from screens.stack_name_screen import StackNameScreen
 from screens.folder_picker_screen import FolderPickerScreen
 from screens.compose_created_screen import ComposeCreatedScreen
+from screens.image_tag_screen import ImageTagScreen
 
 class PilotBIMInstaller:
     def __init__(self, stdscr):
@@ -67,6 +68,7 @@ class PilotBIMInstaller:
         self.screens["stack_name"] = StackNameScreen(stdscr, self)
         self.screens["folder_picker"] = FolderPickerScreen(stdscr, self)
         self.screens["compose_created"] = ComposeCreatedScreen(stdscr, self)
+        self.screens["image_tag"] = ImageTagScreen(stdscr, self)
         
 
     
