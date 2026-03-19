@@ -4,10 +4,10 @@
 import curses
 import os
 import time
-import yaml
 from screens.base_screen import BaseScreen
 from components.ui import Button
 from utils.terminal import safe_addstr
+from utils.compose_builder import build_compose, write_compose_file  # импортируем новый модуль
 
 class FolderPickerScreen(BaseScreen):
     """
@@ -199,45 +199,16 @@ class FolderPickerScreen(BaseScreen):
         self.needs_redraw = True
 
     def _generate_compose_file(self):
-        """Генерирует docker-compose.yml в папке /имя_стека внутри выбранной папки."""
+        """Генерирует docker-compose.yml, используя модуль compose_builder."""
         stack_name = getattr(self.app, 'stack_name', 'pilot-stack')
         target_dir = os.path.join(self.current_path, stack_name)
         os.makedirs(target_dir, exist_ok=True)
         self.app.compose_dir = target_dir
 
-        ports = getattr(self.app, 'assigned_ports', {})
-        
-        # Определяем путь к базам
-        if hasattr(self.app, 'selected_demo_db') and self.app.selected_demo_db:
-            db_volume = "/usr/share/ascon/databases/Databases"
-        else:
-            db_volume = os.path.dirname(self.app.existing_db_path) if getattr(self.app, 'existing_db_path', None) else "/usr/share/ascon/databases"
-
-        tag = getattr(self.app, 'image_tag', 'latest')
-        compose = {
-            'services': {
-                'pilot-server': {                 
-                    'image': f'registry.ascon.ru/project/pilotdev/pilot/pilot-server:{tag}',
-                    #'image': 'registry.ascon.ru/project/pilotdev/pilot/pilot-server:latest',
-                    'container_name': f"{stack_name}_pilot-server",
-                    'hostname': 'pilot-server',
-                    'restart': 'unless-stopped',
-                    'ports': [f"{ports.get('Pilot-Server', 5551)}:5545"],
-                    'volumes': [
-                        '/usr/share/ascon/.aspnet/pilot-server:/root/.aspnet',
-                        '/usr/share/ascon/logs/pilot-server:/App/logs',
-                        '/usr/share/ascon/pilot-server/settings:/usr/share/ascon/pilot-server/settings',
-                        f"{db_volume}:/usr/share/ascon/databases",
-                        '/usr/share/ASCON:/usr/share/ASCON'
-                    ],
-                    'entrypoint': ["/App/Ascon.Pilot.Daemon", "/usr/share/ascon/pilot-server/settings/settings.xml"]
-                }
-            }
-        }
-        
-        file_path = os.path.join(target_dir, 'docker-compose.yml')
-        with open(file_path, 'w') as f:
-            yaml.dump(compose, f, default_flow_style=False, sort_keys=False)
+        # Получаем словарь compose через новый модуль
+        compose_dict = build_compose(self.app)
+        # Записываем файл
+        write_compose_file(compose_dict, target_dir)
 
     def handle_input(self):
         self.handle_resize()
