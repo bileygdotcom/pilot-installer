@@ -59,9 +59,8 @@ class ComposeCreatedScreen(BaseScreen):
 
     def handle_action(self, action):
         if action == "continue":
-            # Переход к следующему экрану (например, запуск стека)
-            # Пока заглушка на db_option, позже замените на нужный экран
-            self.app.switch_screen("db_option")
+            # Переход к следующему экрану
+            self.app.switch_screen("stack_start")
             return None
         elif action == "exit":
             return "exit"
