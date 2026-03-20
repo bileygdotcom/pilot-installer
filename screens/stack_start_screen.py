@@ -6,7 +6,9 @@ import os
 import threading
 import subprocess
 import queue
+import time
 import docker
+from docker.errors import APIError, NotFound
 from screens.base_screen import BaseScreen
 from components.ui import Button
 from utils.terminal import safe_addstr
@@ -14,162 +16,224 @@ from utils.terminal import safe_addstr
 class StackStartScreen(BaseScreen):
     """
     Экран запуска Docker-стека.
-    Сначала загружает образы с прогрессом, затем запускает контейнеры.
+    Сначала загружает образы с прогрессом (через Docker SDK),
+    затем выполняет docker-compose up -d.
     """
     def __init__(self, stdscr, app):
         super().__init__(stdscr, app)
         self.compose_dir = None
-        self.client = None
-        self.images = []               # список имён образов для загрузки
-        self.image_status = {}         # статус каждого образа: 'pending', 'pulling', 'done'
-        self.image_progress = {}       # прогресс загрузки (0-100)
-        self.current_pull_index = 0    # индекс текущего загружаемого образа
-        self.pull_thread = None
-        self.pull_queue = queue.Queue()
+        self.status = "Готов"
+        self.images = []          # список словарей: {name, status, progress, current_layer}
+        self.current_image_index = 0
         self.running = False
         self.started = False
-        self.status_message = "Готов"
-        self.spinner_frames = ['|', '/', '-', '\\']
+        self.docker_client = None
+        self.pull_thread = None
+        self.compose_thread = None
+        self.spinner_chars = ['|', '/', '-', '\\']
         self.spinner_idx = 0
-
-        # Поток для вывода docker-compose up
-        self.up_output_queue = queue.Queue()
-        self.up_output_lines = []
-        self.max_up_lines = 500
-        self.scroll_offset = 0
+        self.update_spinner = False
 
         self.buttons = [
             Button(0, "[ Запустить ]", "start", enabled=True),
             Button(1, "[ Выход ]", "exit", enabled=True)
         ]
         self.current_button = 0
-        self.focus_mode = 0  # 0 - вывод (прокрутка), 1 - кнопки
+        self.focus_mode = 0
 
     def on_enter(self):
         self.compose_dir = getattr(self.app, 'compose_dir', None)
-        self.client = docker.from_env()
-        self.images = self._extract_images_from_compose()
-        self.image_status = {img: 'pending' for img in self.images}
-        self.image_progress = {img: 0 for img in self.images}
-        self.current_pull_index = 0
-        self.pull_queue = queue.Queue()
-        self.up_output_queue = queue.Queue()
-        self.up_output_lines = []
-        self.scroll_offset = 0
+        self.status = "Готов"
+        self.images = []
+        self.current_image_index = 0
         self.running = False
         self.started = False
-        self.status_message = "Готов"
+        self.update_spinner = False
         self.buttons = [
             Button(0, "[ Запустить ]", "start", enabled=True),
             Button(1, "[ Выход ]", "exit", enabled=True)
         ]
         self.needs_redraw = True
 
-    def _extract_images_from_compose(self):
-        """Извлекает имена образов из docker-compose.yml в текущей папке"""
-        images = []
-        compose_path = os.path.join(self.compose_dir, 'docker-compose.yml')
-        if not os.path.exists(compose_path):
-            return images
-        try:
-            import yaml
-            with open(compose_path, 'r') as f:
-                data = yaml.safe_load(f)
-            if 'services' in data:
-                for service, config in data['services'].items():
-                    if 'image' in config:
-                        images.append(config['image'])
-            # удаляем дубликаты, сохраняя порядок
-            seen = set()
-            unique = []
-            for img in images:
-                if img not in seen:
-                    seen.add(img)
-                    unique.append(img)
-            return unique
-        except Exception:
-            return images
+    def draw_instructions(self):
+        pass
 
-    def _pull_images(self):
-        """Загружает образы последовательно, обновляя прогресс"""
-        for i, img in enumerate(self.images):
-            self.current_pull_index = i
-            self.image_status[img] = 'pulling'
-            self.needs_redraw = True
-            try:
-                # Пулл образа с отслеживанием прогресса
-                for line in self.client.api.pull(img, stream=True, decode=True):
-                    # Парсим прогресс
-                    if 'status' in line:
-                        status = line['status']
-                        if 'id' in line:
-                            # Для каждого слоя свой прогресс, мы возьмём общий
-                            pass
-                        # Пытаемся извлечь процент
-                        if 'progressDetail' in line and line['progressDetail']:
-                            total = line['progressDetail'].get('total')
-                            current = line['progressDetail'].get('current')
-                            if total and total > 0:
-                                percent = int(current * 100 / total)
-                                self.image_progress[img] = percent
-                            else:
-                                # Если нет точных данных, крутим спиннер
-                                self.image_progress[img] = (self.image_progress.get(img, 0) + 5) % 100
-                        else:
-                            self.image_progress[img] = (self.image_progress.get(img, 0) + 5) % 100
-                        self.needs_redraw = True
-            except Exception as e:
-                self.pull_queue.put(f"Ошибка загрузки {img}: {e}")
-                self.image_status[img] = 'error'
-            else:
-                self.image_status[img] = 'done'
-                self.image_progress[img] = 100
-                self.needs_redraw = True
-        self.pull_queue.put("pull_done")
-
-    def _run_up(self):
-        """Запускает docker-compose up -d и читает вывод"""
+    def _get_image_list(self):
+        """Получает список образов из docker-compose.yml с помощью docker-compose config"""
         try:
-            proc = subprocess.Popen(
-                ["docker-compose", "up", "-d"],
+            result = subprocess.run(
+                ["docker-compose", "config"],
                 cwd=self.compose_dir,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
+                capture_output=True,
                 text=True,
-                bufsize=1
+                check=True
             )
-            for line in proc.stdout:
-                self.up_output_queue.put(line.rstrip())
-            proc.wait()
-            if proc.returncode == 0:
-                self.up_output_queue.put("--- Стек успешно запущен ---")
-                self.status_message = "Запущен"
-                self.started = True
-                self.buttons = [
-                    Button(0, "[ Остановить ]", "stop", enabled=True),
-                    Button(1, "[ Логи ]", "logs", enabled=True),
-                    Button(2, "[ Выход ]", "exit", enabled=True)
-                ]
-            else:
-                self.up_output_queue.put(f"--- Ошибка запуска (код {proc.returncode}) ---")
-                self.status_message = "Ошибка запуска"
-                self.buttons = [
-                    Button(0, "[ Повторить ]", "start", enabled=True),
-                    Button(1, "[ Выход ]", "exit", enabled=True)
-                ]
+            # Парсим вывод, извлекаем образы (простой способ)
+            images = []
+            for line in result.stdout.splitlines():
+                if 'image:' in line:
+                    img = line.split('image:')[1].strip().strip('"')
+                    if img:
+                        images.append(img)
+            return images
         except Exception as e:
-            self.up_output_queue.put(f"--- Исключение: {e} ---")
-            self.status_message = "Ошибка"
+            self.status = f"Ошибка чтения compose: {e}"
+            return []
+
+    def _pull_image(self, image_name, index):
+        """Загружает один образ с прогрессом"""
+        try:
+            self.images[index]['status'] = "pull_start"
+            self.images[index]['progress'] = 0
+            self.needs_redraw = True
+
+            # Получаем событийный лог
+            for line in self.docker_client.api.pull(image_name, stream=True, decode=True):
+                if not self.running:
+                    return
+                # Парсим прогресс из строки
+                if 'status' in line:
+                    status_text = line['status']
+                    if 'Downloading' in status_text:
+                        if 'progressDetail' in line:
+                            current = line['progressDetail'].get('current', 0)
+                            total = line['progressDetail'].get('total', 1)
+                            if total > 0:
+                                percent = int(current * 100 / total)
+                                self.images[index]['progress'] = percent
+                                self.images[index]['current_layer'] = status_text
+                        else:
+                            self.images[index]['current_layer'] = status_text
+                    elif 'Already exists' in status_text or 'Pull complete' in status_text:
+                        self.images[index]['progress'] = 100
+                        self.images[index]['current_layer'] = status_text
+                    elif 'Pulling from' in status_text:
+                        self.images[index]['current_layer'] = status_text
+                    self.needs_redraw = True
+            self.images[index]['status'] = "done"
+            self.images[index]['progress'] = 100
+        except Exception as e:
+            self.images[index]['status'] = "error"
+            self.images[index]['error'] = str(e)
+            self.status = f"Ошибка загрузки {image_name}: {e}"
+        finally:
+            self.needs_redraw = True
+
+    def _pull_all_images(self):
+        """Загружает все образы последовательно"""
+        images = self._get_image_list()
+        if not images:
+            self.status = "Не найдены образы в compose"
             self.buttons = [
                 Button(0, "[ Повторить ]", "start", enabled=True),
                 Button(1, "[ Выход ]", "exit", enabled=True)
             ]
+            self.running = False
+            self.needs_redraw = True
+            return
+
+        self.images = []
+        for img in images:
+            self.images.append({
+                'name': img,
+                'status': 'wait',
+                'progress': 0,
+                'current_layer': '',
+                'error': ''
+            })
+        self.current_image_index = 0
+
+        self.docker_client = docker.from_env()
+        for idx, img_info in enumerate(self.images):
+            if not self.running:
+                break
+            self.current_image_index = idx
+            self._pull_image(img_info['name'], idx)
+            if img_info['status'] == 'error':
+                break
+
+        if all(img['status'] == 'done' for img in self.images):
+            self.status = "Все образы загружены. Запуск стека..."
+            self.needs_redraw = True
+            self._run_compose_up()
+        else:
+            self.status = "Загрузка образов завершена с ошибками"
+            self.buttons = [
+                Button(0, "[ Повторить ]", "start", enabled=True),
+                Button(1, "[ Выход ]", "exit", enabled=True)
+            ]
+            self.running = False
+            self.needs_redraw = True
+
+    def _run_compose_up(self):
+        """Запускает docker-compose up -d"""
+        def run():
+            try:
+                proc = subprocess.Popen(
+                    ["docker-compose", "up", "-d"],
+                    cwd=self.compose_dir,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.STDOUT,
+                    text=True,
+                    bufsize=1
+                )
+                output = ""
+                for line in proc.stdout:
+                    output += line
+                    self.status = f"Запуск: {line.strip()}"
+                    self.needs_redraw = True
+                proc.wait()
+                if proc.returncode == 0:
+                    self.status = "Стек успешно запущен"
+                    self.started = True
+                    self.buttons = [
+                        Button(0, "[ Остановить ]", "stop", enabled=True),
+                        Button(1, "[ Логи ]", "logs", enabled=True),
+                        Button(2, "[ Выход ]", "exit", enabled=True)
+                    ]
+                else:
+                    self.status = f"Ошибка запуска (код {proc.returncode})"
+                    self.buttons = [
+                        Button(0, "[ Повторить ]", "start", enabled=True),
+                        Button(1, "[ Выход ]", "exit", enabled=True)
+                    ]
+            except Exception as e:
+                self.status = f"Ошибка запуска: {e}"
+                self.buttons = [
+                    Button(0, "[ Повторить ]", "start", enabled=True),
+                    Button(1, "[ Выход ]", "exit", enabled=True)
+                ]
+            finally:
+                self.running = False
+                self.needs_redraw = True
+
+        self.compose_thread = threading.Thread(target=run, daemon=True)
+        self.compose_thread.start()
+
+    def _start_stack(self):
+        if self.running:
+            return
+        self.running = True
+        self.started = False
+        self.status = "Загрузка образов..."
+        self.images = []
+        self.current_image_index = 0
+        self.buttons = [
+            Button(0, "[ Остановить ]", "stop", enabled=True),
+            Button(1, "[ Выход ]", "exit", enabled=True)
+        ]
         self.needs_redraw = True
+        self.update_spinner = True
+
+        self.pull_thread = threading.Thread(target=self._pull_all_images, daemon=True)
+        self.pull_thread.start()
 
     def _stop_stack(self):
-        """Останавливает стек"""
-        self.status_message = "Остановка..."
+        if self.running:
+            self.running = False
+        self.status = "Остановка..."
         self.needs_redraw = True
+
         def down():
             try:
                 subprocess.run(
@@ -178,142 +242,89 @@ class StackStartScreen(BaseScreen):
                     capture_output=True,
                     text=True
                 )
-                self.up_output_queue.put("--- Стек остановлен ---")
-            except Exception as e:
-                self.up_output_queue.put(f"--- Ошибка при остановке: {e} ---")
-            finally:
-                self.status_message = "Остановлен"
+                self.status = "Стек остановлен"
                 self.started = False
                 self.buttons = [
                     Button(0, "[ Запустить ]", "start", enabled=True),
                     Button(1, "[ Выход ]", "exit", enabled=True)
                 ]
+            except Exception as e:
+                self.status = f"Ошибка остановки: {e}"
+            finally:
                 self.needs_redraw = True
+
         threading.Thread(target=down, daemon=True).start()
-
-    def _handle_pull(self):
-        """Обрабатывает очередь от потока загрузки"""
-        try:
-            while True:
-                msg = self.pull_queue.get_nowait()
-                if msg == "pull_done":
-                    # Загрузка завершена, запускаем up
-                    self.status_message = "Загрузка образов завершена. Запуск контейнеров..."
-                    self.needs_redraw = True
-                    threading.Thread(target=self._run_up, daemon=True).start()
-                else:
-                    # сообщение об ошибке
-                    self.up_output_lines.append(msg)
-                    if len(self.up_output_lines) > self.max_up_lines:
-                        self.up_output_lines.pop(0)
-        except queue.Empty:
-            pass
-
-    def _handle_up_output(self):
-        """Обрабатывает вывод docker-compose up"""
-        try:
-            while True:
-                line = self.up_output_queue.get_nowait()
-                self.up_output_lines.append(line)
-                if len(self.up_output_lines) > self.max_up_lines:
-                    self.up_output_lines.pop(0)
-                if self.scroll_offset + self._get_output_height() >= len(self.up_output_lines) - 1:
-                    self.scroll_offset = max(0, len(self.up_output_lines) - self._get_output_height())
-                self.needs_redraw = True
-        except queue.Empty:
-            pass
-
-    def draw_instructions(self):
-        pass
-
-    def _get_output_height(self):
-        # Высота области вывода: вычитаем заголовок, строку статуса и кнопки
-        return self.height - 10
 
     def draw_content(self):
         title = " ЗАПУСК СТЕКА "
         x = max(0, (self.width - len(title)) // 2)
         safe_addstr(self.stdscr, 4, x, title, curses.color_pair(3) | curses.A_BOLD)
 
-        # Строка статуса со спиннером
-        if self.running and not self.started:
-            spinner = self.spinner_frames[self.spinner_idx]
-            self.spinner_idx = (self.spinner_idx + 1) % len(self.spinner_frames)
-            status_line = f"Статус: {self.status_message} {spinner}"
-        else:
-            status_line = f"Статус: {self.status_message}"
-        safe_addstr(self.stdscr, 6, 4, status_line, curses.A_BOLD)
+        # Статус со спиннером
+        status_text = self.status
+        if self.update_spinner and self.running:
+            self.spinner_idx = (self.spinner_idx + 1) % len(self.spinner_chars)
+            status_text = f"{self.spinner_chars[self.spinner_idx]} {self.status}"
+        safe_addstr(self.stdscr, 6, 4, f"Статус: {status_text}", curses.A_BOLD)
 
-        # Список образов с прогрессом (если есть образы)
-        if self.images:
-            safe_addstr(self.stdscr, 7, 4, "Загрузка образов:", curses.A_BOLD)
-            y = 8
-            for i, img in enumerate(self.images):
-                if y >= self.height - 8:
-                    break
-                status = self.image_status[img]
-                if status == 'pending':
-                    symbol = "○"
-                    progress_str = ""
-                elif status == 'pulling':
-                    symbol = "◉"
-                    progress = self.image_progress.get(img, 0)
-                    progress_str = f" {progress}%"
-                elif status == 'done':
-                    symbol = "✓"
-                    progress_str = " 100%"
-                else:
-                    symbol = "✗"
-                    progress_str = " ошибка"
-                # обрезаем имя образа
-                img_short = img
-                if len(img_short) > self.width - 20:
-                    img_short = img_short[:self.width-23] + "..."
-                safe_addstr(self.stdscr, y, 4, f"{symbol} {img_short}{progress_str}")
-                y += 1
-            y += 1
-        else:
-            y = 8
-
-        # Область вывода (логи docker-compose up)
-        out_start_y = y
-        out_height = self._get_output_height() - (y - 8)  # корректировка
-        if out_height < 1:
-            out_height = 1
-        end_idx = min(len(self.up_output_lines), self.scroll_offset + out_height)
-        for i in range(self.scroll_offset, end_idx):
-            yy = out_start_y + (i - self.scroll_offset)
-            if yy >= self.height - 4:
+        # Список образов
+        start_y = 8
+        for i, img in enumerate(self.images):
+            y = start_y + i * 2
+            if y >= self.height - 6:
                 break
-            line = self.up_output_lines[i]
-            if len(line) > self.width - 8:
-                line = line[:self.width-11] + "..."
-            safe_addstr(self.stdscr, yy, 4, line)
+            if i == self.current_image_index and self.running:
+                attr = curses.A_REVERSE
+            else:
+                attr = 0
 
-        if self.scroll_offset > 0:
-            safe_addstr(self.stdscr, out_start_y - 1, 4, "↑ ...")
-        if end_idx < len(self.up_output_lines):
-            safe_addstr(self.stdscr, out_start_y + out_height, 4, "↓ ...")
+            # Имя образа (обрезаем)
+            name = img['name']
+            if len(name) > 40:
+                name = name[:37] + "..."
+            safe_addstr(self.stdscr, y, 4, name, attr)
+
+            # Статус и прогресс
+            if img['status'] == 'wait':
+                status_str = "ожидание"
+            elif img['status'] == 'pull_start':
+                progress = img['progress']
+                status_str = f"загрузка {progress}%"
+                if img.get('current_layer'):
+                    status_str += f" - {img['current_layer'][:30]}"
+            elif img['status'] == 'done':
+                status_str = "готов"
+            elif img['status'] == 'error':
+                status_str = f"ошибка: {img.get('error', '')[:40]}"
+            else:
+                status_str = img['status']
+            safe_addstr(self.stdscr, y, 50, status_str[:self.width-54])
+
+        # Кнопки
+        button_positions = self.get_button_positions()
+        for i, (button, pos) in enumerate(zip(self.buttons, button_positions)):
+            is_active = (i == self.current_button and self.focus_mode == 1)
+            button.draw(self.stdscr, pos['x'], pos['y'], is_active)
 
         # Инструкция
-        if self.focus_mode == 0:
-            instr = "↑↓: прокрутка | TAB: переключение на кнопки"
-        else:
-            instr = "TAB: переключение на вывод | Enter: выбор кнопки"
+        instr = "TAB: переключение на кнопки | ↑↓: прокрутка списка" if self.focus_mode == 0 else "TAB: переключение на список | Enter: выбор кнопки"
         x = max(0, (self.width - len(instr)) // 2)
         safe_addstr(self.stdscr, self.height - 3, x, instr, curses.color_pair(4))
 
     def handle_input(self):
+        # Устанавливаем таймаут во время загрузки, чтобы прогресс обновлялся
+        if self.running and not self.started:
+            self.stdscr.timeout(100)
+        else:
+            self.stdscr.timeout(-1)
+
         self.handle_resize()
         self.draw()
-
-        self._handle_pull()
-        self._handle_up_output()
 
         key = self.stdscr.getch()
 
         if key == curses.KEY_MOUSE:
-            # можно добавить обработку мыши позже
+            # Мышь пока не реализована
             pass
         elif key == curses.KEY_RESIZE:
             self.handle_resize()
@@ -321,53 +332,26 @@ class StackStartScreen(BaseScreen):
         elif key == 9:  # TAB
             self.focus_mode = (self.focus_mode + 1) % 2
             self.needs_redraw = True
-        elif self.focus_mode == 0:
-            self._handle_output_keys(key)
-        else:
+        elif key in (curses.KEY_UP, curses.KEY_DOWN):
+            # Прокрутка списка образов (если есть)
+            if self.focus_mode == 0 and self.images:
+                if key == curses.KEY_UP and self.current_image_index > 0:
+                    self.current_image_index -= 1
+                    self.needs_redraw = True
+                elif key == curses.KEY_DOWN and self.current_image_index < len(self.images) - 1:
+                    self.current_image_index += 1
+                    self.needs_redraw = True
+        elif self.focus_mode == 1:
             result = self.handle_keyboard(key)
             if result:
                 return self.handle_action(result)
         return None
 
-    def _handle_output_keys(self, key):
-        if key == curses.KEY_UP:
-            if self.scroll_offset > 0:
-                self.scroll_offset -= 1
-                self.needs_redraw = True
-        elif key == curses.KEY_DOWN:
-            if self.scroll_offset + self._get_output_height() < len(self.up_output_lines):
-                self.scroll_offset += 1
-                self.needs_redraw = True
-        elif key == curses.KEY_PPAGE:
-            self.scroll_offset = max(0, self.scroll_offset - self._get_output_height())
-            self.needs_redraw = True
-        elif key == curses.KEY_NPAGE:
-            self.scroll_offset = min(
-                max(0, len(self.up_output_lines) - self._get_output_height()),
-                self.scroll_offset + self._get_output_height()
-            )
-            self.needs_redraw = True
-
     def handle_action(self, action):
         if action == "start":
-            if self.running:
-                return None
-            self.running = True
-            self.started = False
-            self.buttons = [
-                Button(0, "[ Остановить ]", "stop", enabled=False),  # на время загрузки нельзя остановить
-                Button(1, "[ Выход ]", "exit", enabled=False)
-            ]
-            self.status_message = "Загрузка образов..."
-            self.needs_redraw = True
-            self.pull_thread = threading.Thread(target=self._pull_images, daemon=True)
-            self.pull_thread.start()
+            self._start_stack()
         elif action == "stop":
-            if self.running:
-                # останавливаем загрузку/запуск
-                # но проще вызвать _stop_stack, который выполнит down
-                self._stop_stack()
-                self.running = False
+            self._stop_stack()
         elif action == "logs":
             if self.started:
                 self.app.switch_screen("stack_logs")
