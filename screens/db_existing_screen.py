@@ -12,8 +12,7 @@ from utils.terminal import safe_addstr
 class DbExistingScreen(BaseScreen):
     """
     Экран выбора существующей базы данных.
-    Сначала выбирает файл базы данных (.dbp), затем файл архива (.pilotfa),
-    после чего показывает диалог с подтверждением.
+    Последовательно выбирает файл базы данных (.dbp) и файл файлового архива (.pilotfa).
     """
     def __init__(self, stdscr, app):
         super().__init__(stdscr, app)
@@ -28,7 +27,12 @@ class DbExistingScreen(BaseScreen):
         self.filter_ext = []
         self.message = ""
 
-        # Кнопки основного экрана
+        # Для диалога подтверждения
+        self.dialog_message = ""
+        self.dialog_buttons = []
+        self.current_dialog_button = 0
+
+        # Основные кнопки
         self.buttons = [
             Button(0, "[ Выбрать ]", "select", enabled=False),
             Button(1, "[ Выход ]", "exit", enabled=True)
@@ -40,17 +44,11 @@ class DbExistingScreen(BaseScreen):
         self._last_click_time = 0
         self._last_click_index = -1
 
-        # Диалог подтверждения
-        self.dialog_active = False
-        self.dialog_message = ""
-        self.dialog_buttons = []
-        self.current_dialog_button = 0
-
     def on_enter(self):
         stack_path = getattr(self.app, 'stack_path', None)
         if not stack_path:
-            self.message = "Путь стека не определён. Сначала задайте имя стека."
             self.state = "error"
+            self.message = "Путь стека не определён. Сначала задайте имя стека."
             self.needs_redraw = True
             return
         databases_dir = os.path.join(stack_path, "databases")
@@ -125,35 +123,37 @@ class DbExistingScreen(BaseScreen):
             self.scroll_offset = self.selected_index - list_height + 1
 
     def _get_list_height(self):
-        return max(1, self.height - 12)  # стандартное для file_picker
+        # Путь на строке 5, индикатор прокрутки на строке 6, список с 7 строки
+        # Заканчивается перед сообщением на строке self.height - 6
+        return max(1, self.height - 14)
 
-    def _get_title(self):
+    def _get_subtitle(self):
         if self.state == "selecting_db":
-            return "Выбор файла базы данных .dbp"
+            return "Выберите файл базы данных (.dbp)"
         elif self.state == "selecting_fa":
-            return "Выбор файла файлового архива .pilotfa"
+            return "Выберите файл файлового архива (.pilotfa)"
         return ""
 
     def draw_content(self):
-        # Заголовок экрана (под основным заголовком BaseScreen)
-        title = self._get_title()
-        x = max(0, (self.width - len(title)) // 2)
-        safe_addstr(self.stdscr, 3, x, title, curses.color_pair(3) | curses.A_BOLD)
+        # Подзаголовок на строке 3
+        subtitle = self._get_subtitle()
+        x = max(0, (self.width - len(subtitle)) // 2)
+        safe_addstr(self.stdscr, 3, x, subtitle, curses.color_pair(3) | curses.A_BOLD)
 
-        # Путь
+        # Путь на строке 5
         path_display = self.current_path
         if len(path_display) > self.width - 10:
             path_display = "..." + path_display[-(self.width-13):]
         safe_addstr(self.stdscr, 5, 4, "Путь: " + path_display)
 
-        # Список файлов
+        # Список начиная со строки 7
         list_start_y = 7
         list_height = self._get_list_height()
         end_idx = min(len(self.files), self.scroll_offset + list_height)
 
         for i in range(self.scroll_offset, end_idx):
             y = list_start_y + (i - self.scroll_offset)
-            if y >= self.height - 7:  # оставляем место для сообщений и кнопок
+            if y >= self.height - 7:  # оставляем место для сообщения, инструкции и кнопок
                 break
             prefix = "📁 " if self.is_dir[i] else "📄 "
             filename = self.files[i]
@@ -163,9 +163,9 @@ class DbExistingScreen(BaseScreen):
             attr = curses.A_REVERSE if i == self.selected_index else 0
             safe_addstr(self.stdscr, y, 4, prefix + filename, attr)
 
-        # Индикаторы прокрутки
+        # Индикаторы прокрутки на строке 6 и после списка
         if self.scroll_offset > 0:
-            safe_addstr(self.stdscr, list_start_y - 1, 4, "↑ ...")
+            safe_addstr(self.stdscr, 6, 4, "↑ ...")
         if end_idx < len(self.files):
             safe_addstr(self.stdscr, list_start_y + list_height, 4, "↓ ...")
 
@@ -173,20 +173,15 @@ class DbExistingScreen(BaseScreen):
         if self.message:
             safe_addstr(self.stdscr, self.height - 6, 4, self.message, curses.color_pair(5))
 
-        # Кнопки и инструкция будут добавлены в родительском draw() после draw_content
-
-    def draw(self):
-        """Переопределяем draw, чтобы добавить инструкцию и кнопки в нужном месте."""
-        super().draw()  # рисует рамку, заголовок, статусную строку
-        # Инструкция (выводим ниже содержимого, но выше кнопок)
+        # Инструкция
         instr = "↑↓: выбор | Enter: открыть папку / выбрать файл | Backspace: назад | TAB: переключение на кнопки"
         if len(instr) > self.width:
             instr = instr[:self.width-4] + "..."
         safe_addstr(self.stdscr, self.height - 5, 4, instr, curses.color_pair(4))
 
     def _draw_dialog(self):
-        win_height = 8 + 2  # высота с учётом двух строк путей
-        win_width = min(70, self.width - 10)
+        win_height = 8
+        win_width = min(60, self.width - 10)
         start_y = (self.height - win_height) // 2
         start_x = (self.width - win_width) // 2
 
@@ -205,7 +200,6 @@ class DbExistingScreen(BaseScreen):
         self.stdscr.addch(start_y + win_height - 1, start_x, curses.ACS_LLCORNER)
         self.stdscr.addch(start_y + win_height - 1, start_x + win_width - 1, curses.ACS_LRCORNER)
 
-        # Сообщение
         lines = self.dialog_message.split('\n')
         for i, line in enumerate(lines):
             if i >= win_height - 3:
@@ -214,7 +208,6 @@ class DbExistingScreen(BaseScreen):
             y = start_y + 1 + i
             safe_addstr(self.stdscr, y, x, line[:win_width-4])
 
-        # Кнопки
         button_y = start_y + win_height - 2
         total_width = sum(len(b.text) for b in self.dialog_buttons) + 4 * (len(self.dialog_buttons) - 1)
         button_start_x = start_x + (win_width - total_width) // 2
@@ -241,31 +234,33 @@ class DbExistingScreen(BaseScreen):
         full = os.path.join(self.current_path, selected)
         if self.state == "selecting_db":
             self.selected_db_path = full
-            self._switch_to_selecting_fa()
-        else:
+            # Переходим к выбору архива
+            self.state = "selecting_fa"
+            self.filter_ext = ['.pilotfa']
+            # Начинаем с той же папки, где был выбран .dbp
+            self.current_path = os.path.dirname(full)
+            self._load_files()
+            self.needs_redraw = True
+        elif self.state == "selecting_fa":
             self.selected_fa_path = full
-            self._show_confirm_dialog()
+            # Показываем диалог
+            self._show_confirm()
 
-    def _switch_to_selecting_fa(self):
-        """Переключается на выбор архива, сохраняя текущую папку"""
-        self.state = "selecting_fa"
-        self.filter_ext = ['.pilotfa']
-        # остаёмся в той же папке, где был выбран dbp
-        self._load_files()
-        self.needs_redraw = True
-
-    def _show_confirm_dialog(self):
-        self.dialog_active = True
+    def _show_confirm(self):
+        self.state = "confirm"
         self.dialog_message = (
             f"Файл базы данных:\n{self.selected_db_path}\n\n"
             f"Файл файлового архива:\n{self.selected_fa_path}"
         )
         self.dialog_buttons = [
-            Button(0, "[ ОК ]", "confirm_ok", enabled=True),
+            Button(0, "[ OK ]", "confirm_ok", enabled=True),
             Button(1, "[ Назад ]", "confirm_back", enabled=True)
         ]
         self.current_dialog_button = 0
         self.needs_redraw = True
+        # Принудительная перерисовка
+        self.draw()
+        self.stdscr.refresh()
 
     def _handle_dialog_action(self, action):
         if action == "confirm_ok":
@@ -280,27 +275,28 @@ class DbExistingScreen(BaseScreen):
                 self.app.existing_fa_path = dest_fa
             except Exception as e:
                 self.message = f"Ошибка копирования: {e}"
-                self.dialog_active = False
+                self.state = "error"
                 self.needs_redraw = True
                 return None
-            self.dialog_active = False
             # Переходим к созданию администраторов
             self.app.switch_screen("admin_creation")
+            return None
         elif action == "confirm_back":
-            self.dialog_active = False
+            # Возвращаемся к выбору базы данных
             self.state = "selecting_db"
             self.filter_ext = ['.dbp']
-            self.current_path = os.path.dirname(self.selected_db_path)  # возвращаемся в папку с dbp
+            self.current_path = os.path.dirname(self.selected_db_path)  # стартуем из той же папки
             self._load_files()
             self.needs_redraw = True
+        return None
 
     def handle_mouse(self):
-        if self.dialog_active:
+        if self.state == "confirm":
             try:
                 _, mx, my, _, bstate = curses.getmouse()
                 if bstate & (curses.BUTTON1_CLICKED | curses.BUTTON1_DOUBLE_CLICKED):
-                    win_height = 10  # примерно высота диалога
-                    win_width = min(70, self.width - 10)
+                    win_height = 8
+                    win_width = min(60, self.width - 10)
                     start_y = (self.height - win_height) // 2
                     start_x = (self.width - win_width) // 2
                     button_y = start_y + win_height - 2
@@ -364,7 +360,7 @@ class DbExistingScreen(BaseScreen):
         self.handle_resize()
         self.draw()
 
-        if self.dialog_active:
+        if self.state == "confirm":
             key = self.stdscr.getch()
             if key == curses.KEY_MOUSE:
                 self.handle_mouse()
@@ -379,6 +375,7 @@ class DbExistingScreen(BaseScreen):
                 self._handle_dialog_action(action)
             return None
 
+        # Режим выбора файла
         key = self.stdscr.getch()
 
         if key == curses.KEY_MOUSE:
