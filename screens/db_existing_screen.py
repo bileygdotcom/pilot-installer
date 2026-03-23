@@ -10,9 +10,14 @@ from components.ui import Button
 from utils.terminal import safe_addstr
 
 class DbExistingScreen(BaseScreen):
+    """
+    Экран выбора существующей базы данных.
+    Сначала выбирает файл базы данных (.dbp), затем файл архива (.pilotfa),
+    после чего показывает диалог с подтверждением.
+    """
     def __init__(self, stdscr, app):
         super().__init__(stdscr, app)
-        self.state = "selecting_db"  # selecting_db, confirm_db, selecting_fa, confirm_fa
+        self.state = "selecting_db"  # selecting_db, selecting_fa, confirm
         self.selected_db_path = None
         self.selected_fa_path = None
         self.current_path = None
@@ -21,25 +26,31 @@ class DbExistingScreen(BaseScreen):
         self.selected_index = 0
         self.scroll_offset = 0
         self.filter_ext = []
-        self.dialog_message = ""
-        self.dialog_buttons = []
-        self.current_dialog_button = 0
         self.message = ""
-        self.error_message = None
+
+        # Кнопки основного экрана
+        self.buttons = [
+            Button(0, "[ Выбрать ]", "select", enabled=False),
+            Button(1, "[ Выход ]", "exit", enabled=True)
+        ]
+        self.current_button = 0
+        self.focus_mode = 0  # 0 - список, 1 - кнопки
 
         # Для мыши
         self._last_click_time = 0
         self._last_click_index = -1
 
-        # Кнопки для выбора (не используются напрямую, т.к. управление через диалоги)
-        self.buttons = []
-        self.current_button = 0
+        # Диалог подтверждения
+        self.dialog_active = False
+        self.dialog_message = ""
+        self.dialog_buttons = []
+        self.current_dialog_button = 0
 
     def on_enter(self):
         stack_path = getattr(self.app, 'stack_path', None)
         if not stack_path:
+            self.message = "Путь стека не определён. Сначала задайте имя стека."
             self.state = "error"
-            self.error_message = "Путь стека не определён. Сначала задайте имя стека."
             self.needs_redraw = True
             return
         databases_dir = os.path.join(stack_path, "databases")
@@ -47,18 +58,20 @@ class DbExistingScreen(BaseScreen):
         self.current_path = databases_dir
         self.state = "selecting_db"
         self.filter_ext = ['.dbp']
-        self.message = ""
-        self.error_message = None
-        self.load_files()
+        self._load_files()
         self.needs_redraw = True
 
-    def load_files(self):
+    def draw_instructions(self):
+        pass
+
+    def _load_files(self):
         try:
             entries = os.listdir(self.current_path)
         except PermissionError:
-            self.message = "Нет доступа к директории"
             self.files = []
             self.is_dir = []
+            self.message = "Нет доступа к директории"
+            self._update_select_button_state()
             return
 
         dirs = []
@@ -89,8 +102,15 @@ class DbExistingScreen(BaseScreen):
         else:
             self.selected_index = 0
             self.scroll_offset = 0
-            if not self.message:
-                self.message = "Нет файлов"
+            self.message = "Нет подходящих файлов" if self.filter_ext else "Нет файлов"
+
+        self._update_select_button_state()
+
+    def _update_select_button_state(self):
+        if self.state in ("selecting_db", "selecting_fa") and self.files and not self.is_dir[self.selected_index]:
+            self.buttons[0].enabled = True
+        else:
+            self.buttons[0].enabled = False
 
     def _adjust_scroll(self):
         if not self.files:
@@ -105,101 +125,68 @@ class DbExistingScreen(BaseScreen):
             self.scroll_offset = self.selected_index - list_height + 1
 
     def _get_list_height(self):
-        return max(1, self.height - 12)
+        return max(1, self.height - 12)  # стандартное для file_picker
 
-    def _enter_folder(self, index):
-        folder = self.files[index]
-        full = os.path.join(self.current_path, folder)
-        try:
-            # Проверяем, что это папка и есть доступ
-            if os.path.isdir(full):
-                self.current_path = full
-                self.load_files()
-                self.selected_index = 0
-                self.message = ""
-        except PermissionError:
-            self.message = "Нет доступа"
-        self.needs_redraw = True
-
-    def draw_instructions(self):
-        pass
+    def _get_title(self):
+        if self.state == "selecting_db":
+            return "Выбор файла базы данных .dbp"
+        elif self.state == "selecting_fa":
+            return "Выбор файла файлового архива .pilotfa"
+        return ""
 
     def draw_content(self):
-        title = " ВЫБОР СУЩЕСТВУЮЩЕЙ БАЗЫ "
+        # Заголовок экрана (под основным заголовком BaseScreen)
+        title = self._get_title()
         x = max(0, (self.width - len(title)) // 2)
-        safe_addstr(self.stdscr, 4, x, title, curses.color_pair(3) | curses.A_BOLD)
+        safe_addstr(self.stdscr, 3, x, title, curses.color_pair(3) | curses.A_BOLD)
 
-        if self.state == "error":
-            safe_addstr(self.stdscr, 6, 4, self.error_message or "Ошибка", curses.color_pair(5))
-            return
-
-        if self.state in ("selecting_db", "selecting_fa"):
-            self._draw_file_picker()
-        elif self.state in ("confirm_db", "confirm_fa"):
-            self._draw_dialog()
-
-    def _draw_file_picker(self):
-        # Подзаголовок
-        if self.state == "selecting_db":
-            subtitle = "Выберите файл базы данных (*.dbp)"
-        else:
-            subtitle = "Выберите файл файлового архива (*.pilotfa)"
-        x = max(0, (self.width - len(subtitle)) // 2)
-        safe_addstr(self.stdscr, 5, x, subtitle, curses.color_pair(3) | curses.A_BOLD)
-
-        # Текущий путь
+        # Путь
         path_display = self.current_path
         if len(path_display) > self.width - 10:
             path_display = "..." + path_display[-(self.width-13):]
-        safe_addstr(self.stdscr, 7, 4, "Путь: " + path_display)
+        safe_addstr(self.stdscr, 5, 4, "Путь: " + path_display)
 
-        list_start_y = 9
+        # Список файлов
+        list_start_y = 7
         list_height = self._get_list_height()
         end_idx = min(len(self.files), self.scroll_offset + list_height)
 
         for i in range(self.scroll_offset, end_idx):
             y = list_start_y + (i - self.scroll_offset)
-            if y >= self.height - 5:
+            if y >= self.height - 7:  # оставляем место для сообщений и кнопок
                 break
             prefix = "📁 " if self.is_dir[i] else "📄 "
-            name = self.files[i]
+            filename = self.files[i]
             max_len = self.width - 6
-            if len(name) > max_len:
-                name = name[:max_len-3] + "..."
+            if len(filename) > max_len:
+                filename = filename[:max_len-3] + "..."
             attr = curses.A_REVERSE if i == self.selected_index else 0
-            safe_addstr(self.stdscr, y, 4, prefix + name, attr)
+            safe_addstr(self.stdscr, y, 4, prefix + filename, attr)
 
+        # Индикаторы прокрутки
         if self.scroll_offset > 0:
             safe_addstr(self.stdscr, list_start_y - 1, 4, "↑ ...")
         if end_idx < len(self.files):
             safe_addstr(self.stdscr, list_start_y + list_height, 4, "↓ ...")
 
-        # Информация о выбранном файле
-        if self.files and not self.is_dir[self.selected_index]:
-            full_path = os.path.join(self.current_path, self.files[self.selected_index])
-            try:
-                st = os.stat(full_path)
-                size = st.st_size
-                mtime = time.strftime("%Y-%m-%d %H:%M", time.localtime(st.st_mtime))
-                size_str = self._format_size(size)
-                info = f"Размер: {size_str} | Изменён: {mtime}"
-                safe_addstr(self.stdscr, self.height - 6, 4, info[:self.width-8])
-            except:
-                pass
-
         # Сообщение
         if self.message:
-            safe_addstr(self.stdscr, self.height - 5, 4, self.message, curses.color_pair(5))
+            safe_addstr(self.stdscr, self.height - 6, 4, self.message, curses.color_pair(5))
 
-        # Инструкция
-        instr = "↑↓: выбор | Enter: открыть папку / выбрать файл | Backspace: назад"
+        # Кнопки и инструкция будут добавлены в родительском draw() после draw_content
+
+    def draw(self):
+        """Переопределяем draw, чтобы добавить инструкцию и кнопки в нужном месте."""
+        super().draw()  # рисует рамку, заголовок, статусную строку
+        # Инструкция (выводим ниже содержимого, но выше кнопок)
+        instr = "↑↓: выбор | Enter: открыть папку / выбрать файл | Backspace: назад | TAB: переключение на кнопки"
         if len(instr) > self.width:
             instr = instr[:self.width-4] + "..."
-        safe_addstr(self.stdscr, self.height - 4, 4, instr, curses.color_pair(4))
+        safe_addstr(self.stdscr, self.height - 5, 4, instr, curses.color_pair(4))
 
     def _draw_dialog(self):
-        win_height = 8
-        win_width = min(60, self.width - 10)
+        win_height = 8 + 2  # высота с учётом двух строк путей
+        win_width = min(70, self.width - 10)
         start_y = (self.height - win_height) // 2
         start_x = (self.width - win_width) // 2
 
@@ -218,6 +205,7 @@ class DbExistingScreen(BaseScreen):
         self.stdscr.addch(start_y + win_height - 1, start_x, curses.ACS_LLCORNER)
         self.stdscr.addch(start_y + win_height - 1, start_x + win_width - 1, curses.ACS_LRCORNER)
 
+        # Сообщение
         lines = self.dialog_message.split('\n')
         for i, line in enumerate(lines):
             if i >= win_height - 3:
@@ -226,6 +214,7 @@ class DbExistingScreen(BaseScreen):
             y = start_y + 1 + i
             safe_addstr(self.stdscr, y, x, line[:win_width-4])
 
+        # Кнопки
         button_y = start_y + win_height - 2
         total_width = sum(len(b.text) for b in self.dialog_buttons) + 4 * (len(self.dialog_buttons) - 1)
         button_start_x = start_x + (win_width - total_width) // 2
@@ -234,68 +223,139 @@ class DbExistingScreen(BaseScreen):
             is_active = (i == self.current_dialog_button)
             button.draw(self.stdscr, x, button_y, is_active)
 
-    def _format_size(self, size):
-        for unit in ['B', 'KB', 'MB', 'GB']:
-            if size < 1024:
-                return f"{size:.1f} {unit}"
-            size /= 1024
-        return f"{size:.1f} TB"
+    def _enter_folder(self, index):
+        folder = self.files[index]
+        full = os.path.join(self.current_path, folder)
+        try:
+            os.chdir(full)  # проверка доступа
+            self.current_path = full
+            self._load_files()
+            self.selected_index = 0
+            self.message = ""
+        except PermissionError:
+            self.message = "Нет доступа"
+        self.needs_redraw = True
+
+    def _select_file(self, index):
+        selected = self.files[index]
+        full = os.path.join(self.current_path, selected)
+        if self.state == "selecting_db":
+            self.selected_db_path = full
+            self._switch_to_selecting_fa()
+        else:
+            self.selected_fa_path = full
+            self._show_confirm_dialog()
+
+    def _switch_to_selecting_fa(self):
+        """Переключается на выбор архива, сохраняя текущую папку"""
+        self.state = "selecting_fa"
+        self.filter_ext = ['.pilotfa']
+        # остаёмся в той же папке, где был выбран dbp
+        self._load_files()
+        self.needs_redraw = True
+
+    def _show_confirm_dialog(self):
+        self.dialog_active = True
+        self.dialog_message = (
+            f"Файл базы данных:\n{self.selected_db_path}\n\n"
+            f"Файл файлового архива:\n{self.selected_fa_path}"
+        )
+        self.dialog_buttons = [
+            Button(0, "[ ОК ]", "confirm_ok", enabled=True),
+            Button(1, "[ Назад ]", "confirm_back", enabled=True)
+        ]
+        self.current_dialog_button = 0
+        self.needs_redraw = True
+
+    def _handle_dialog_action(self, action):
+        if action == "confirm_ok":
+            # Копируем файлы в папку стека
+            stack_path = self.app.stack_path
+            dest_db = os.path.join(stack_path, "databases", os.path.basename(self.selected_db_path))
+            dest_fa = os.path.join(stack_path, "databases", os.path.basename(self.selected_fa_path))
+            try:
+                shutil.copy2(self.selected_db_path, dest_db)
+                shutil.copy2(self.selected_fa_path, dest_fa)
+                self.app.existing_db_path = dest_db
+                self.app.existing_fa_path = dest_fa
+            except Exception as e:
+                self.message = f"Ошибка копирования: {e}"
+                self.dialog_active = False
+                self.needs_redraw = True
+                return None
+            self.dialog_active = False
+            # Переходим к созданию администраторов
+            self.app.switch_screen("admin_creation")
+        elif action == "confirm_back":
+            self.dialog_active = False
+            self.state = "selecting_db"
+            self.filter_ext = ['.dbp']
+            self.current_path = os.path.dirname(self.selected_db_path)  # возвращаемся в папку с dbp
+            self._load_files()
+            self.needs_redraw = True
 
     def handle_mouse(self):
+        if self.dialog_active:
+            try:
+                _, mx, my, _, bstate = curses.getmouse()
+                if bstate & (curses.BUTTON1_CLICKED | curses.BUTTON1_DOUBLE_CLICKED):
+                    win_height = 10  # примерно высота диалога
+                    win_width = min(70, self.width - 10)
+                    start_y = (self.height - win_height) // 2
+                    start_x = (self.width - win_width) // 2
+                    button_y = start_y + win_height - 2
+                    total_width = sum(len(b.text) for b in self.dialog_buttons) + 4 * (len(self.dialog_buttons) - 1)
+                    button_start_x = start_x + (win_width - total_width) // 2
+                    for i, button in enumerate(self.dialog_buttons):
+                        x1 = button_start_x + i * (len(button.text) + 4)
+                        x2 = x1 + len(button.text)
+                        if my == button_y and x1 <= mx <= x2:
+                            self.current_dialog_button = i
+                            self.needs_redraw = True
+                            self._handle_dialog_action(button.action)
+                            return None
+            except:
+                pass
+            return None
+
+        if self.state not in ("selecting_db", "selecting_fa"):
+            return None
         try:
             _, mx, my, _, bstate = curses.getmouse()
             current_time = time.time()
 
-            if self.state in ("selecting_db", "selecting_fa"):
-                # Кнопки (в этом экране нет кнопок, поэтому пропускаем)
-                # Список
-                list_start_y = 9
-                list_height = self._get_list_height()
-                list_end_y = list_start_y + list_height
-                if list_start_y <= my < list_end_y and self.files:
-                    index = self.scroll_offset + (my - list_start_y)
-                    if 0 <= index < len(self.files):
-                        if current_time - self._last_click_time < 0.1 and index == self._last_click_index:
-                            return None
-                        self._last_click_time = current_time
-                        self._last_click_index = index
-                        if bstate & (curses.BUTTON1_CLICKED | curses.BUTTON1_DOUBLE_CLICKED):
-                            self.selected_index = index
+            # Кнопки
+            button_positions = self.get_button_positions()
+            for i, pos in enumerate(button_positions):
+                if my == pos['y'] and pos['x1'] <= mx <= pos['x2']:
+                    if bstate & (curses.BUTTON1_CLICKED | curses.BUTTON1_DOUBLE_CLICKED):
+                        if self.buttons[i].enabled:
+                            self.current_button = i
+                            self.focus_mode = 1
                             self.needs_redraw = True
-                            # Двойной клик по папке или файлу
-                            if bstate & curses.BUTTON1_DOUBLE_CLICKED:
-                                if self.is_dir[index]:
-                                    self._enter_folder(index)
-                                else:
-                                    # Выбор файла
-                                    if self.state == "selecting_db":
-                                        self.selected_db_path = os.path.join(self.current_path, self.files[index])
-                                        self._show_confirm_db()
-                                    else:
-                                        self.selected_fa_path = os.path.join(self.current_path, self.files[index])
-                                        self._show_confirm_fa()
+                            return self.buttons[i].action
+                    return None
+
+            # Список
+            list_start_y = 7
+            list_height = self._get_list_height()
+            list_end_y = list_start_y + list_height
+            if list_start_y <= my < list_end_y and self.files:
+                index = self.scroll_offset + (my - list_start_y)
+                if 0 <= index < len(self.files):
+                    if current_time - self._last_click_time < 0.1 and index == self._last_click_index:
+                        return None
+                    self._last_click_time = current_time
+                    self._last_click_index = index
+                    if bstate & (curses.BUTTON1_CLICKED | curses.BUTTON1_DOUBLE_CLICKED):
+                        self.selected_index = index
+                        self._update_select_button_state()
+                        self.needs_redraw = True
+                        if bstate & curses.BUTTON1_DOUBLE_CLICKED:
+                            if self.is_dir[index]:
+                                self._enter_folder(index)
                             else:
-                                # Одиночный клик – просто выделяем
-                                pass
-            elif self.state in ("confirm_db", "confirm_fa"):
-                # Клик по кнопкам диалога
-                win_height = 8
-                win_width = min(60, self.width - 10)
-                start_y = (self.height - win_height) // 2
-                start_x = (self.width - win_width) // 2
-                button_y = start_y + win_height - 2
-                total_width = sum(len(b.text) for b in self.dialog_buttons) + 4 * (len(self.dialog_buttons) - 1)
-                button_start_x = start_x + (win_width - total_width) // 2
-                for i, button in enumerate(self.dialog_buttons):
-                    x1 = button_start_x + i * (len(button.text) + 4)
-                    x2 = x1 + len(button.text)
-                    if my == button_y and x1 <= mx <= x2:
-                        if bstate & (curses.BUTTON1_CLICKED | curses.BUTTON1_DOUBLE_CLICKED):
-                            self.current_dialog_button = i
-                            self.needs_redraw = True
-                            # Действие выполняется здесь, не возвращаясь в main
-                            self._handle_dialog_action(button.action)
-                            return None
+                                self._select_file(index)
         except:
             pass
         return None
@@ -304,8 +364,21 @@ class DbExistingScreen(BaseScreen):
         self.handle_resize()
         self.draw()
 
-        # Обрабатываем события мыши до клавиатуры, чтобы не пропустить
-        # Но мы не можем вызывать handle_mouse из getch, поэтому перехватываем ключ мыши
+        if self.dialog_active:
+            key = self.stdscr.getch()
+            if key == curses.KEY_MOUSE:
+                self.handle_mouse()
+            elif key == curses.KEY_RESIZE:
+                self.handle_resize()
+                self.needs_redraw = True
+            elif key == 9:  # TAB
+                self.current_dialog_button = (self.current_dialog_button + 1) % len(self.dialog_buttons)
+                self.needs_redraw = True
+            elif key in (ord('\n'), ord('\r'), curses.KEY_ENTER):
+                action = self.dialog_buttons[self.current_dialog_button].action
+                self._handle_dialog_action(action)
+            return None
+
         key = self.stdscr.getch()
 
         if key == curses.KEY_MOUSE:
@@ -315,122 +388,51 @@ class DbExistingScreen(BaseScreen):
         elif key == curses.KEY_RESIZE:
             self.handle_resize()
             self.needs_redraw = True
-        elif key == 27:  # ESC
-            return "exit"
+        elif key == 9:  # TAB
+            self.focus_mode = (self.focus_mode + 1) % 2
+            self.needs_redraw = True
+        elif self.focus_mode == 0:
+            self._handle_file_keys(key)
         else:
-            if self.state in ("selecting_db", "selecting_fa"):
-                self._handle_list_keys(key)
-            elif self.state in ("confirm_db", "confirm_fa"):
-                if key in (ord('\n'), ord('\r'), curses.KEY_ENTER):
-                    action = self.dialog_buttons[self.current_dialog_button].action
-                    self._handle_dialog_action(action)
+            result = self.handle_keyboard(key)
+            if result:
+                return self.handle_action(result)
         return None
 
-    def _handle_list_keys(self, key):
+    def _handle_file_keys(self, key):
         if key == curses.KEY_UP:
             if self.selected_index > 0:
                 self.selected_index -= 1
                 self._adjust_scroll()
+                self._update_select_button_state()
                 self.needs_redraw = True
         elif key == curses.KEY_DOWN:
             if self.selected_index < len(self.files) - 1:
                 self.selected_index += 1
                 self._adjust_scroll()
+                self._update_select_button_state()
                 self.needs_redraw = True
         elif key in (ord('\n'), ord('\r'), curses.KEY_ENTER):
             if self.files:
-                selected = self.files[self.selected_index]
-                full = os.path.join(self.current_path, selected)
                 if self.is_dir[self.selected_index]:
                     self._enter_folder(self.selected_index)
                 else:
-                    if self.state == "selecting_db":
-                        self.selected_db_path = full
-                        self._show_confirm_db()
-                    else:
-                        self.selected_fa_path = full
-                        self._show_confirm_fa()
-        elif key in (127, curses.KEY_BACKSPACE, 8):  # Backspace
+                    self._select_file(self.selected_index)
+        elif key in (127, curses.KEY_BACKSPACE, 8):
             parent = os.path.dirname(self.current_path)
             if parent and parent != self.current_path:
                 self.current_path = parent
-                self.load_files()
+                self._load_files()
                 self.selected_index = 0
                 self.message = ""
                 self.needs_redraw = True
 
-    def _show_confirm_db(self):
-        self.state = "confirm_db"
-        self.dialog_message = f"Выбран файл базы данных:\n{self._shorten_path(self.selected_db_path)}"
-        self.dialog_buttons = [
-            Button(0, "[ OK ]", "confirm_db_ok", enabled=True),
-            Button(1, "[ Назад ]", "confirm_db_back", enabled=True)
-        ]
-        self.current_dialog_button = 0
-        self.needs_redraw = True
-
-    def _show_confirm_fa(self):
-        self.state = "confirm_fa"
-        self.dialog_message = f"Выбран файловый архив:\n{self._shorten_path(self.selected_fa_path)}"
-        self.dialog_buttons = [
-            Button(0, "[ OK ]", "confirm_fa_ok", enabled=True),
-            Button(1, "[ Назад ]", "confirm_fa_back", enabled=True)
-        ]
-        self.current_dialog_button = 0
-        self.needs_redraw = True
-
-    def _shorten_path(self, path, max_len=60):
-        if len(path) <= max_len:
-            return path
-        head, tail = os.path.split(path)
-        if len(head) > max_len - len(tail) - 3:
-            head = "..." + head[-(max_len - len(tail) - 6):]
-        return os.path.join(head, tail)
-
-    def _handle_dialog_action(self, action):
-        if action == "confirm_db_ok":
-            # Копируем выбранный файл базы в папку стека
-            stack_path = self.app.stack_path
-            dest_db = os.path.join(stack_path, "databases", os.path.basename(self.selected_db_path))
-            try:
-                shutil.copy2(self.selected_db_path, dest_db)
-                self.app.existing_db_path = dest_db
-            except Exception as e:
-                self.error_message = f"Ошибка копирования: {e}"
-                self.state = "error"
-                self.needs_redraw = True
-                return None
-            # Переходим к выбору архива
-            self.state = "selecting_fa"
-            self.filter_ext = ['.pilotfa']
-            self.current_path = os.path.dirname(self.selected_db_path)  # та же папка, где был dbp
-            self.load_files()
-            self.needs_redraw = True
-        elif action == "confirm_db_back":
-            self.state = "selecting_db"
-            self.filter_ext = ['.dbp']
-            self.current_path = os.path.dirname(self.selected_db_path)  # возвращаемся к папке, где выбирали базу
-            self.load_files()
-            self.needs_redraw = True
-        elif action == "confirm_fa_ok":
-            # Копируем архив в папку стека
-            stack_path = self.app.stack_path
-            dest_fa = os.path.join(stack_path, "databases", os.path.basename(self.selected_fa_path))
-            try:
-                shutil.copy2(self.selected_fa_path, dest_fa)
-                self.app.existing_fa_path = dest_fa
-            except Exception as e:
-                self.error_message = f"Ошибка копирования: {e}"
-                self.state = "error"
-                self.needs_redraw = True
-                return None
-            return "next"  # переход к следующему экрану
-        elif action == "confirm_fa_back":
-            self.state = "selecting_fa"
-            self.filter_ext = ['.pilotfa']
-            self.current_path = os.path.dirname(self.selected_fa_path)  # возвращаемся к папке, где выбирали архив
-            self.load_files()
-            self.needs_redraw = True
+    def handle_action(self, action):
+        if action == "select":
+            if self.state in ("selecting_db", "selecting_fa") and self.files and not self.is_dir[self.selected_index]:
+                self._select_file(self.selected_index)
+        elif action == "exit":
+            return "exit"
         return None
 
     def get_screen_name(self):
