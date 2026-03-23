@@ -23,7 +23,7 @@ class StackStartScreen(BaseScreen):
         super().__init__(stdscr, app)
         self.compose_dir = None
         self.status = "Готов"
-        self.images = []          # список словарей: {name, status, progress, current_layer}
+        self.images = []          # список словарей: {name, display, status, progress, current_layer, error}
         self.current_image_index = 0
         self.running = False
         self.started = False
@@ -40,6 +40,10 @@ class StackStartScreen(BaseScreen):
         ]
         self.current_button = 0
         self.focus_mode = 0
+
+        # Для мыши
+        self._last_click_time = 0
+        self._last_click_index = -1
 
     def on_enter(self):
         self.compose_dir = getattr(self.app, 'compose_dir', None)
@@ -59,7 +63,7 @@ class StackStartScreen(BaseScreen):
         pass
 
     def _get_image_list(self):
-        """Получает список образов из docker-compose.yml с помощью docker-compose config"""
+        """Получает список образов из docker-compose.yml"""
         try:
             result = subprocess.run(
                 ["docker-compose", "config"],
@@ -68,7 +72,6 @@ class StackStartScreen(BaseScreen):
                 text=True,
                 check=True
             )
-            # Парсим вывод, извлекаем образы (простой способ)
             images = []
             for line in result.stdout.splitlines():
                 if 'image:' in line:
@@ -87,11 +90,9 @@ class StackStartScreen(BaseScreen):
             self.images[index]['progress'] = 0
             self.needs_redraw = True
 
-            # Получаем событийный лог
             for line in self.docker_client.api.pull(image_name, stream=True, decode=True):
                 if not self.running:
                     return
-                # Парсим прогресс из строки
                 if 'status' in line:
                     status_text = line['status']
                     if 'Downloading' in status_text:
@@ -121,8 +122,8 @@ class StackStartScreen(BaseScreen):
 
     def _pull_all_images(self):
         """Загружает все образы последовательно"""
-        images = self._get_image_list()
-        if not images:
+        image_list = self._get_image_list()
+        if not image_list:
             self.status = "Не найдены образы в compose"
             self.buttons = [
                 Button(0, "[ Повторить ]", "start", enabled=True),
@@ -133,9 +134,14 @@ class StackStartScreen(BaseScreen):
             return
 
         self.images = []
-        for img in images:
+        prefix = "registry.ascon.ru/project/pilotdev/pilot/"
+        for img in image_list:
+            display_name = img
+            if img.startswith(prefix):
+                display_name = img[len(prefix):]
             self.images.append({
                 'name': img,
+                'display': display_name,
                 'status': 'wait',
                 'progress': 0,
                 'current_layer': '',
@@ -278,8 +284,8 @@ class StackStartScreen(BaseScreen):
             else:
                 attr = 0
 
-            # Имя образа (обрезаем)
-            name = img['name']
+            # Имя образа (короткое)
+            name = img['display']
             if len(name) > 40:
                 name = name[:37] + "..."
             safe_addstr(self.stdscr, y, 4, name, attr)
@@ -300,16 +306,52 @@ class StackStartScreen(BaseScreen):
                 status_str = img['status']
             safe_addstr(self.stdscr, y, 50, status_str[:self.width-54])
 
-        # Кнопки
+        # Кнопки (рисуются отдельно)
         button_positions = self.get_button_positions()
         for i, (button, pos) in enumerate(zip(self.buttons, button_positions)):
             is_active = (i == self.current_button and self.focus_mode == 1)
             button.draw(self.stdscr, pos['x'], pos['y'], is_active)
 
         # Инструкция
-        instr = "TAB: переключение на кнопки | ↑↓: прокрутка списка" if self.focus_mode == 0 else "TAB: переключение на список | Enter: выбор кнопки"
+        instr = "TAB: переключение на кнопки | ↑↓: прокрутка списка | Мышь: клик"
+        if self.focus_mode == 1:
+            instr = "TAB: переключение на список | Enter: выбор кнопки | Мышь: клик"
         x = max(0, (self.width - len(instr)) // 2)
         safe_addstr(self.stdscr, self.height - 3, x, instr, curses.color_pair(4))
+
+    def handle_mouse(self):
+        """Обрабатывает клики мыши по кнопкам и списку"""
+        try:
+            _, mx, my, _, bstate = curses.getmouse()
+            current_time = time.time()
+
+            # Сначала проверяем кнопки
+            button_positions = self.get_button_positions()
+            for i, pos in enumerate(button_positions):
+                if my == pos['y'] and pos['x1'] <= mx <= pos['x2']:
+                    if bstate & (curses.BUTTON1_CLICKED | curses.BUTTON1_DOUBLE_CLICKED):
+                        if self.buttons[i].enabled:
+                            self.current_button = i
+                            self.focus_mode = 1
+                            self.needs_redraw = True
+                            return self.buttons[i].action
+                    return None
+
+            # Если не кнопка, проверяем клик по списку образов
+            start_y = 8
+            for i, img in enumerate(self.images):
+                y = start_y + i * 2
+                if y >= self.height - 6:
+                    break
+                if my == y and 4 <= mx < 50:
+                    if bstate & (curses.BUTTON1_CLICKED | curses.BUTTON1_DOUBLE_CLICKED):
+                        self.current_image_index = i
+                        self.focus_mode = 0
+                        self.needs_redraw = True
+                    return None
+        except:
+            pass
+        return None
 
     def handle_input(self):
         # Устанавливаем таймаут во время загрузки, чтобы прогресс обновлялся
@@ -324,8 +366,9 @@ class StackStartScreen(BaseScreen):
         key = self.stdscr.getch()
 
         if key == curses.KEY_MOUSE:
-            # Мышь пока не реализована
-            pass
+            result = self.handle_mouse()
+            if result:
+                return self.handle_action(result)
         elif key == curses.KEY_RESIZE:
             self.handle_resize()
             self.needs_redraw = True
@@ -333,7 +376,6 @@ class StackStartScreen(BaseScreen):
             self.focus_mode = (self.focus_mode + 1) % 2
             self.needs_redraw = True
         elif key in (curses.KEY_UP, curses.KEY_DOWN):
-            # Прокрутка списка образов (если есть)
             if self.focus_mode == 0 and self.images:
                 if key == curses.KEY_UP and self.current_image_index > 0:
                     self.current_image_index -= 1
