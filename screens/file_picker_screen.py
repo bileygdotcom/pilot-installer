@@ -261,7 +261,9 @@ class FilePickerScreen(BaseScreen):
             self.focus_mode = (self.focus_mode + 1) % 2
             self.needs_redraw = True
         elif self.focus_mode == 0:
-            self._handle_list_keys(key)
+            result = self._handle_list_keys(key)
+            if result:
+                return self.handle_action(result)
         else:
             result = self.handle_keyboard(key)
             if result:
@@ -308,6 +310,7 @@ class FilePickerScreen(BaseScreen):
                 self.selected_index = 0
                 self.message = ""
                 self.needs_redraw = True
+        return None
 
     def handle_action(self, action):
         if action == "cancel":
