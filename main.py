@@ -64,7 +64,7 @@ class PilotBIMInstaller:
         self.screens["stack_name"] = StackNameScreen(stdscr, self)
         self.screens["file_picker"] = FilePickerScreen(
             stdscr, self,
-            filter_extensions=['.lic'],
+            filter_extensions=['.lic', '.pilotlic'],
             title="Выберите файл лицензии Pilot"
         )
         self.screens["license_confirm"] = LicenseConfirmScreen(stdscr, self)
@@ -93,7 +93,6 @@ class PilotBIMInstaller:
             if result == "exit":
                 self.running = False
             elif result == "next":
-                # Определяем, какой экран следующий
                 if isinstance(self.current_screen, WelcomeScreen):
                     self.switch_screen("os_detection")
                 elif isinstance(self.current_screen, OSDectionScreen):
@@ -102,8 +101,10 @@ class PilotBIMInstaller:
                     self.switch_screen("docker_check")
                 elif isinstance(self.current_screen, StackNameScreen):
                     self.switch_screen("file_picker")
+                elif isinstance(self.current_screen, FilePickerScreen):
+                    self.switch_screen("license_confirm")
                 elif isinstance(self.current_screen, LicenseConfirmScreen):
-                    self.switch_screen("db_option")
+                    self.switch_screen("components_selection")
                 elif isinstance(self.current_screen, DbOptionScreen):
                     # Уже переключится на db_demo или db_existing внутри handle_action
                     pass

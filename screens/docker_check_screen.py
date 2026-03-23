@@ -86,7 +86,7 @@ class DockerCheckScreen(BaseScreen):
     def on_continue(self):
         """Переход к выбору файла лицензии, если Docker уже установлен"""
         if self.docker_installed and self.compose_installed:
-            self.app.switch_screen("file_picker")
+            self.app.switch_screen("stack_name")
         return None   # не передаём управление в main, т.к. сами переключили экран
     
     def get_screen_name(self):
