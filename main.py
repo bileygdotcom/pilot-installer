@@ -3,7 +3,6 @@
 
 import curses
 import sys
-import os
 from screens.welcome_screen import WelcomeScreen
 from screens.os_detection_screen import OSDectionScreen
 from screens.docker_check_screen import DockerCheckScreen
@@ -21,8 +20,8 @@ from screens.image_tag_screen import ImageTagScreen
 from screens.compose_created_screen import ComposeCreatedScreen
 from screens.stack_start_screen import StackStartScreen
 from screens.stack_logs_screen import StackLogsScreen
+from screens.initial_setup_screen import InitialSetupScreen
 from utils.terminal import setup_mouse, cleanup_mouse
-from screens.db_confirm_screen import DbConfirmScreen
 
 class PilotBIMInstaller:
     def __init__(self, stdscr):
@@ -31,7 +30,7 @@ class PilotBIMInstaller:
         self.running = True
         self.screens = {}
 
-        # Хранилище данных
+        # Данные, передаваемые между экранами
         self.stack_name = None
         self.stack_path = None
         self.license_file_path = None
@@ -57,7 +56,7 @@ class PilotBIMInstaller:
             curses.init_pair(5, curses.COLOR_RED, curses.COLOR_BLACK)
             curses.init_pair(6, curses.COLOR_GREEN, curses.COLOR_BLACK)
 
-        # Инициализация экранов в новом порядке
+        # Создание экранов
         self.screens["welcome"] = WelcomeScreen(stdscr, self)
         self.screens["os_detection"] = OSDectionScreen(stdscr, self)
         self.screens["docker_check"] = DockerCheckScreen(stdscr, self)
@@ -79,7 +78,7 @@ class PilotBIMInstaller:
         self.screens["compose_created"] = ComposeCreatedScreen(stdscr, self)
         self.screens["stack_start"] = StackStartScreen(stdscr, self)
         self.screens["stack_logs"] = StackLogsScreen(stdscr, self)
-        self.screens["db_confirm"] = DbConfirmScreen(stdscr, self)
+        self.screens["initial_setup"] = InitialSetupScreen(stdscr, self)
 
         self.current_screen = self.screens["welcome"]
 
@@ -95,6 +94,7 @@ class PilotBIMInstaller:
             if result == "exit":
                 self.running = False
             elif result == "next":
+                # Определяем следующий экран
                 if isinstance(self.current_screen, WelcomeScreen):
                     self.switch_screen("os_detection")
                 elif isinstance(self.current_screen, OSDectionScreen):
@@ -106,17 +106,13 @@ class PilotBIMInstaller:
                 elif isinstance(self.current_screen, FilePickerScreen):
                     self.switch_screen("license_confirm")
                 elif isinstance(self.current_screen, LicenseConfirmScreen):
-                    self.switch_screen("components_selection")
+                    self.switch_screen("db_option")
                 elif isinstance(self.current_screen, DbOptionScreen):
-                    # Уже переключится на db_demo или db_existing внутри handle_action
+                    # Переход уже происходит внутри handle_action
                     pass
                 elif isinstance(self.current_screen, DbDemoScreen):
-                    self.switch_screen("components_selection")
+                    self.switch_screen("admin_creation")
                 elif isinstance(self.current_screen, DbExistingScreen):
-                    self.switch_screen("components_selection")
-                elif isinstance(self.current_screen, ComponentsSelectionScreen):
-                    self.switch_screen("port_assignment")
-                elif isinstance(self.current_screen, PortAssignmentScreen):
                     self.switch_screen("admin_creation")
                 elif isinstance(self.current_screen, AdminCreationScreen):
                     self.switch_screen("image_tag")
@@ -125,17 +121,20 @@ class PilotBIMInstaller:
                 elif isinstance(self.current_screen, ComposeCreatedScreen):
                     self.switch_screen("stack_start")
                 elif isinstance(self.current_screen, StackStartScreen):
-                    # Выход после запуска? Можно оставить как есть
+                    # После запуска стека переходим к начальной настройке
+                    self.switch_screen("initial_setup")
+                elif isinstance(self.current_screen, InitialSetupScreen):
+                    # После настройки можно перейти на финальный экран или завершить
                     pass
             elif result == "install":
                 self.switch_screen("docker_install")
             elif result == "back":
-                # Возврат на предыдущий (в основном из file_picker, db_existing)
+                # Возврат на предыдущий (используется в file_picker и db_existing)
                 if isinstance(self.current_screen, FilePickerScreen):
                     self.switch_screen("stack_name")
                 elif isinstance(self.current_screen, DbExistingScreen):
                     self.switch_screen("db_option")
-                # и т.д.
+                # можно добавить другие
                 pass
 
     def quit(self):
