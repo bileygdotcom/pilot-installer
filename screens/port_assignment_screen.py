@@ -215,7 +215,7 @@ class PortAssignmentScreen(BaseScreen):
     def handle_action(self, action):
         if action == "continue":
             self.app.assigned_ports = {name: port for name, port in self.components}
-            self.app.switch_screen("db_option")  # переход
+            self.app.switch_screen("admin_creation")  # переход
             return None
         elif action == "exit":
             return "exit"

@@ -41,6 +41,9 @@ class AdminCreationScreen(BaseScreen):
         # Оставляем только серверные компоненты (Pilot-Server, Pilot-BIM-Server, Pilot-TextSearch-Server)
         allowed = ["Pilot-Server", "Pilot-BIM-Server", "Pilot-TextSearch-Server"]
         self.components = [comp for comp in selected if comp in allowed]
+        # Убедимся, что Pilot-Server всегда присутствует (на случай, если он не выбран)
+        if "Pilot-Server" not in self.components:
+            self.components.insert(0, "Pilot-Server")
         self.credentials = {comp: {"login": "", "password": ""} for comp in self.components}
         self.selected_row = 0
         self.selected_col = 0
@@ -67,7 +70,6 @@ class AdminCreationScreen(BaseScreen):
         return self._get_table_start_y() + row
 
     def _get_login_x(self):
-        # Колонка компонента теперь занимает 30 символов (от 4 до 33)
         return 34
 
     def _get_password_x(self):
@@ -93,7 +95,7 @@ class AdminCreationScreen(BaseScreen):
             if y >= self.height - 4:
                 break
 
-            # Компонент — выводим полностью (макс 30 символов)
+            # Компонент
             safe_addstr(self.stdscr, y, 4, comp[:30])
 
             # Логин
@@ -140,16 +142,14 @@ class AdminCreationScreen(BaseScreen):
                     if y < 0 or y >= self.height:
                         continue
                     if my == y:
-                        # Проверяем колонку логина (от 34 до 48)
-                        if 34 <= mx <= 48:
+                        if self._get_login_x() <= mx < self._get_login_x() + 15:
                             self.selected_row = i
                             self.selected_col = 0
                             self.needs_redraw = True
                             if bstate & curses.BUTTON1_DOUBLE_CLICKED:
                                 self._start_edit()
                             return None
-                        # Проверяем колонку пароля (от 50 до 64)
-                        elif 50 <= mx <= 64:
+                        elif self._get_password_x() <= mx < self._get_password_x() + 15:
                             self.selected_row = i
                             self.selected_col = 1
                             self.needs_redraw = True
@@ -216,7 +216,6 @@ class AdminCreationScreen(BaseScreen):
             self.edit_buffer = self.credentials[comp]["password"]
         self.editing = True
         self.edit_col = self.selected_col
-        # Определяем позицию для поля ввода
         y = self._get_row_y(self.selected_row)
         x = self._get_login_x() if self.selected_col == 0 else self._get_password_x()
         self.edit_y = y
@@ -226,7 +225,6 @@ class AdminCreationScreen(BaseScreen):
         self.stdscr.move(y, x)
 
     def _handle_edit_input(self):
-        """Обрабатывает ввод в режиме редактирования"""
         curses.echo()
         self.stdscr.move(self.edit_y, self.edit_x)
         s = self.stdscr.getstr(self.edit_y, self.edit_x, 15).decode('utf-8')
@@ -248,9 +246,7 @@ class AdminCreationScreen(BaseScreen):
         if action == "create":
             # Сохраняем данные в app
             self.app.admin_credentials = self.credentials
-            # Переход к следующему экрану
-            self.app.switch_screen("image_tag")
-            return None
+            return "next"   # переход на следующий экран
         elif action == "exit":
             return "exit"
         return None
