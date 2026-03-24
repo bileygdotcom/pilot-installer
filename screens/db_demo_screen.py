@@ -14,30 +14,23 @@ from components.ui import Button
 from utils.terminal import safe_addstr
 
 class DbDemoScreen(BaseScreen):
-    """
-    Экран загрузки и выбора демонстрационной базы данных.
-    Скачивает архив, распаковывает, показывает список доступных баз.
-    """
     def __init__(self, stdscr, app):
         super().__init__(stdscr, app)
-        self.state = "downloading"  # downloading, extracting, selecting, error
+        self.state = "downloading"
         self.progress = 0
         self.status_message = ""
         self.error_message = None
         self.download_thread = None
         self.extract_thread = None
-        self.databases = []          # список имён баз (папок)
+        self.databases = []
         self.selected_index = 0
         self.scroll_offset = 0
-        self.focus_mode = 0          # 0 - список, 1 - кнопки
+        self.focus_mode = 0
         self.temp_dir = None
         self.extract_dir = None
-
-        # Для мыши
         self._last_click_time = 0
         self._last_click_index = -1
 
-        # Кнопки: "Выбор" (изначально неактивна) и "Выход"
         self.buttons = [
             Button(0, "[ Выбор ]", "select", enabled=False),
             Button(1, "[ Выход ]", "exit", enabled=True)
@@ -45,15 +38,12 @@ class DbDemoScreen(BaseScreen):
         self.current_button = 0
 
     def on_enter(self):
-        """При входе на экран начинаем скачивание"""
-        # Определяем папку стека
         stack_path = getattr(self.app, 'stack_path', None)
         if not stack_path:
-            self.state = "error"
             self.error_message = "Путь стека не определён. Сначала задайте имя стека."
+            self.state = "error"
             self.needs_redraw = True
             return
-
         self.extract_dir = os.path.join(stack_path, "databases")
         self.state = "downloading"
         self.progress = 0
@@ -70,7 +60,6 @@ class DbDemoScreen(BaseScreen):
         self.start_download()
 
     def start_download(self):
-        """Запускает скачивание в отдельном потоке"""
         def download():
             url = "https://pilot.ascon.ru/release/Databases.zip"
             local_path = os.path.join(self.temp_dir, "Databases.zip")
@@ -100,11 +89,10 @@ class DbDemoScreen(BaseScreen):
         self.download_thread.start()
 
     def start_extract(self, zip_path):
-        """Распаковывает архив в отдельном потоке с нормализацией Windows-путей"""
         def extract():
             try:
                 os.makedirs(self.extract_dir, exist_ok=True)
-
+                # Используем внутреннюю распаковку
                 with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                     file_list = zip_ref.namelist()
                     total_files = len(file_list)
@@ -144,30 +132,22 @@ class DbDemoScreen(BaseScreen):
         self.extract_thread.start()
 
     def scan_databases(self):
-        """Сканирует папку /usr/ascon/<stack>/databases/Databases на наличие подпапок"""
-        try:
-            databases_container = os.path.join(self.extract_dir, "Databases")
-            if not os.path.exists(databases_container):
-                self.error_message = "Папка Databases не найдена после распаковки"
-                self.state = "error"
-                self.needs_redraw = True
-                return
+        databases_container = os.path.join(self.extract_dir, "Databases")
+        if not os.path.exists(databases_container):
+            self.error_message = "Папка Databases не найдена после распаковки"
+            self.state = "error"
+            self.needs_redraw = True
+            return
 
-            items = os.listdir(databases_container)
-            dirs = [item for item in items if os.path.isdir(os.path.join(databases_container, item))]
-            dirs.sort(key=str.lower)
-
-            if dirs:
-                self.databases = dirs
-                self.selected_index = 0
-                self.state = "selecting"
-                self.buttons[0].enabled = True
-                self.status_message = f"Найдено баз: {len(self.databases)}"
-            else:
-                self.error_message = "В папке Databases нет подпапок с базами данных"
-                self.state = "error"
-        except Exception as e:
-            self.error_message = f"Ошибка сканирования: {str(e)}"
+        items = os.listdir(databases_container)
+        dirs = [item for item in items if os.path.isdir(os.path.join(databases_container, item))]
+        if dirs:
+            self.databases = dirs
+            self.selected_index = 0
+            self.state = "selecting"
+            self.buttons[0].enabled = True
+        else:
+            self.error_message = "В папке Databases нет подпапок с базами данных"
             self.state = "error"
         self.needs_redraw = True
 
@@ -187,7 +167,6 @@ class DbDemoScreen(BaseScreen):
             self.scroll_offset = self.selected_index - list_height + 1
 
     def draw_content(self):
-        """Отрисовывает содержимое в зависимости от состояния"""
         title = " ДЕМОНСТРАЦИОННАЯ БАЗА ДАННЫХ "
         x = max(0, (self.width - len(title)) // 2)
         safe_addstr(self.stdscr, 4, x, title, curses.color_pair(3) | curses.A_BOLD)
@@ -272,8 +251,6 @@ class DbDemoScreen(BaseScreen):
 
                     if bstate & (curses.BUTTON1_CLICKED | curses.BUTTON1_DOUBLE_CLICKED):
                         self.selected_index = index
-                        self._adjust_scroll()
-                        self.focus_mode = 0
                         self.needs_redraw = True
             return None
         except:
@@ -322,7 +299,7 @@ class DbDemoScreen(BaseScreen):
                 self._adjust_scroll()
                 self.needs_redraw = True
         elif key in (ord(' '), ord('\n'), ord('\r'), curses.KEY_ENTER):
-            # Пробел или Enter — просто обновляем выделение
+            # Пробел или Enter переключают выбор (радио-кнопка)
             self.needs_redraw = True
 
     def handle_action(self, action):
@@ -330,6 +307,14 @@ class DbDemoScreen(BaseScreen):
             if self.state == "selecting" and self.databases:
                 selected_db = self.databases[self.selected_index]
                 self.app.selected_demo_db = selected_db
+                # Сохраняем полные пути к файлам базы и архива
+                base_path = os.path.join(self.extract_dir, "Databases", selected_db)
+                db_file = os.path.join(base_path, f"{selected_db}.dbp")
+                if not os.path.exists(db_file):
+                    db_file = os.path.join(base_path, "base.dbp")
+                self.app.existing_db_path = db_file
+                fa_file = os.path.join(base_path, "FileArchive", f"{selected_db}.pilotfa")
+                self.app.existing_fa_path = fa_file
                 return "next"
         elif action == "exit":
             return "exit"
