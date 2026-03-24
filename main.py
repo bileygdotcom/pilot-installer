@@ -22,6 +22,7 @@ from screens.compose_created_screen import ComposeCreatedScreen
 from screens.stack_start_screen import StackStartScreen
 from screens.stack_logs_screen import StackLogsScreen
 from utils.terminal import setup_mouse, cleanup_mouse
+from screens.db_confirm_screen import DbConfirmScreen
 
 class PilotBIMInstaller:
     def __init__(self, stdscr):
@@ -78,6 +79,7 @@ class PilotBIMInstaller:
         self.screens["compose_created"] = ComposeCreatedScreen(stdscr, self)
         self.screens["stack_start"] = StackStartScreen(stdscr, self)
         self.screens["stack_logs"] = StackLogsScreen(stdscr, self)
+        self.screens["db_confirm"] = DbConfirmScreen(stdscr, self)
 
         self.current_screen = self.screens["welcome"]
 
