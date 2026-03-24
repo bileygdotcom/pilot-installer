@@ -248,8 +248,8 @@ class AdminCreationScreen(BaseScreen):
         if action == "create":
             # Сохраняем данные в app
             self.app.admin_credentials = self.credentials
-            # Переход к следующему экрану (замените на нужный)
-            self.app.switch_screen("stack_name")
+            # Переход к следующему экрану
+            self.app.switch_screen("image_tag")
             return None
         elif action == "exit":
             return "exit"
