@@ -8,16 +8,18 @@ def build_compose(app):
     image_tag = getattr(app, 'image_tag', 'latest')
     selected_components = getattr(app, 'selected_components', [])
 
-    # Пути внутри стека
-    data_root = f"/usr/share/ascon/{stack_name}"
-    db_volume = f"{stack_path}/databases/Databases"  # для демо
+    # Определяем путь к папке с базами данных (монтируется в /usr/share/ascon/databases)
     if hasattr(app, 'existing_db_path') and app.existing_db_path:
-        # Для существующей базы – монтируем папку, содержащую базу (которая уже лежит в databases/)
+        # Для существующей базы: монтируем папку, в которой лежит .dbp (там же лежит и FileArchive)
         db_volume = os.path.dirname(app.existing_db_path)
     elif hasattr(app, 'selected_demo_db') and app.selected_demo_db:
-        db_volume = f"{stack_path}/databases/Databases"
+        # Для демо-базы: монтируем папку Databases целиком
+        db_volume = os.path.join(stack_path, "databases", "Databases")
+    else:
+        db_volume = os.path.join(stack_path, "databases", "Databases")  # по умолчанию
 
     services = {}
+
     # Pilot-Server
     if 'Pilot-Server' in selected_components:
         services['pilot-server'] = {
@@ -27,9 +29,9 @@ def build_compose(app):
             'restart': 'unless-stopped',
             'ports': [f"{ports.get('Pilot-Server', 5551)}:5545"],
             'volumes': [
-                f"{data_root}/.aspnet/pilot-server:/root/.aspnet",
-                f"{data_root}/logs/pilot-server:/App/logs",
-                f"{data_root}/pilot-server/settings:/usr/share/ascon/pilot-server/settings",
+                f"{stack_path}/.aspnet/pilot-server:/root/.aspnet",
+                f"{stack_path}/logs/pilot-server:/App/logs",
+                f"{stack_path}/pilot-server/settings:/usr/share/ascon/pilot-server/settings",
                 f"{db_volume}:/usr/share/ascon/databases",
                 f"{stack_path}/license:/usr/share/ASCON"
             ],
@@ -44,9 +46,9 @@ def build_compose(app):
             'hostname': 'pilot-bim-server',
             'restart': 'unless-stopped',
             'volumes': [
-                f"{data_root}/.aspnet/pilot-bim-server:/root/.aspnet",
-                f"{data_root}/logs/pilot-bim-server:/App/logs",
-                f"{data_root}/pilot-bim-server:/usr/share/ASCON/Pilot-BIM-Server"
+                f"{stack_path}/.aspnet/pilot-bim-server:/root/.aspnet",
+                f"{stack_path}/logs/pilot-bim-server:/App/logs",
+                f"{stack_path}/pilot-bim-server:/usr/share/ASCON/Pilot-BIM-Server"
             ],
             'depends_on': ['pilot-server']
         }
@@ -57,7 +59,8 @@ def build_compose(app):
         if hasattr(app, 'selected_demo_db') and app.selected_demo_db:
             db_name = app.selected_demo_db
         elif hasattr(app, 'existing_db_path') and app.existing_db_path:
-            db_name = os.path.basename(os.path.dirname(app.existing_db_path))
+            # Для существующей базы имя базы = имя файла .dbp без расширения
+            db_name = os.path.splitext(os.path.basename(app.existing_db_path))[0]
         services['pilot-web-server'] = {
             'image': f"registry.ascon.ru/project/pilotdev/pilot/pilot-web-server:{image_tag}",
             'container_name': f"{stack_name}_pilot-web-server",

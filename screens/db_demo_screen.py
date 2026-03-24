@@ -92,7 +92,6 @@ class DbDemoScreen(BaseScreen):
         def extract():
             try:
                 os.makedirs(self.extract_dir, exist_ok=True)
-                # Используем внутреннюю распаковку
                 with zipfile.ZipFile(zip_path, 'r') as zip_ref:
                     file_list = zip_ref.namelist()
                     total_files = len(file_list)
@@ -299,7 +298,6 @@ class DbDemoScreen(BaseScreen):
                 self._adjust_scroll()
                 self.needs_redraw = True
         elif key in (ord(' '), ord('\n'), ord('\r'), curses.KEY_ENTER):
-            # Пробел или Enter переключают выбор (радио-кнопка)
             self.needs_redraw = True
 
     def handle_action(self, action):
@@ -307,14 +305,6 @@ class DbDemoScreen(BaseScreen):
             if self.state == "selecting" and self.databases:
                 selected_db = self.databases[self.selected_index]
                 self.app.selected_demo_db = selected_db
-                # Сохраняем полные пути к файлам базы и архива
-                base_path = os.path.join(self.extract_dir, "Databases", selected_db)
-                db_file = os.path.join(base_path, f"{selected_db}.dbp")
-                if not os.path.exists(db_file):
-                    db_file = os.path.join(base_path, "base.dbp")
-                self.app.existing_db_path = db_file
-                fa_file = os.path.join(base_path, "FileArchive", f"{selected_db}.pilotfa")
-                self.app.existing_fa_path = fa_file
                 return "next"
         elif action == "exit":
             return "exit"
