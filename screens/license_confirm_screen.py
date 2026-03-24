@@ -9,15 +9,10 @@ from components.ui import Button
 from utils.terminal import safe_addstr
 
 class LicenseConfirmScreen(BaseScreen):
-    """
-    Экран подтверждения установки лицензии.
-    Копирует выбранный файл в /usr/share/ASCON/Pilot Server/License.
-    Предполагается запуск с правами root.
-    """
     def __init__(self, stdscr, app):
         super().__init__(stdscr, app)
         self.license_path = None
-        self.dest_dir = "/usr/share/ASCON/Pilot Server/License"
+        self.dest_dir = None
         self.dest_file = None
         self.status = "Ожидание..."
         self.error_message = None
@@ -29,8 +24,7 @@ class LicenseConfirmScreen(BaseScreen):
         self.current_button = 0
         self.operation_done = False
 
-    def perform_copy(self):
-        """Выполняет копирование файла лицензии"""
+    def on_enter(self):
         self.license_path = getattr(self.app, 'license_file_path', None)
         if not self.license_path:
             self.status = "Ошибка: файл не выбран"
@@ -39,6 +33,18 @@ class LicenseConfirmScreen(BaseScreen):
             self.needs_redraw = True
             return
 
+        stack_path = getattr(self.app, 'stack_path', None)
+        if not stack_path:
+            self.status = "Ошибка: путь стека не определён"
+            self.error_message = "Сначала задайте имя стека"
+            self.operation_done = True
+            self.needs_redraw = True
+            return
+
+        self.dest_dir = os.path.join(stack_path, "license", "Pilot Server", "License")
+        self.perform_copy()
+
+    def perform_copy(self):
         if not os.path.exists(self.license_path):
             self.status = "Ошибка: файл не существует"
             self.error_message = f"Файл {self.license_path} не найден"
@@ -47,27 +53,15 @@ class LicenseConfirmScreen(BaseScreen):
             return
 
         try:
-            # 1. Создаём целевую папку, если не существует
-            self.status = "Проверка папки назначения..."
-            self.needs_redraw = True
             os.makedirs(self.dest_dir, exist_ok=True)
-
-            # 2. Копируем файл
             filename = os.path.basename(self.license_path)
             self.dest_file = os.path.join(self.dest_dir, filename)
-            self.status = "Копирование файла..."
-            self.needs_redraw = True
             shutil.copy2(self.license_path, self.dest_file)
 
-            # Успех
             self.status = "✓ Лицензия успешно установлена"
             self.copy_success = True
             self.buttons[0].enabled = True
             self.error_message = None
-
-        except PermissionError:
-            self.status = "Ошибка прав доступа"
-            self.error_message = "Запустите программу с правами root (sudo)"
         except Exception as e:
             self.status = "Ошибка копирования"
             self.error_message = str(e)
@@ -76,8 +70,6 @@ class LicenseConfirmScreen(BaseScreen):
         self.needs_redraw = True
 
     def draw_content(self):
-        """Отрисовывает содержимое экрана"""
-        # Заголовок
         title = " УСТАНОВКА ЛИЦЕНЗИИ "
         x = max(0, (self.width - len(title)) // 2)
         safe_addstr(self.stdscr, 4, x, title, curses.color_pair(3) | curses.A_BOLD)
@@ -85,7 +77,6 @@ class LicenseConfirmScreen(BaseScreen):
         start_y = 7
         line = 0
 
-        # Информация о файле
         if self.license_path:
             safe_addstr(self.stdscr, start_y + line, 10, "Выбранный файл:", curses.A_BOLD)
             line += 1
@@ -95,18 +86,15 @@ class LicenseConfirmScreen(BaseScreen):
             safe_addstr(self.stdscr, start_y + line, 12, path_display)
             line += 2
 
-        # Статус
         safe_addstr(self.stdscr, start_y + line, 10, "Статус:", curses.A_BOLD)
         status_color = curses.color_pair(6) if self.copy_success else curses.color_pair(5)
         safe_addstr(self.stdscr, start_y + line, 20, self.status, status_color)
         line += 2
 
-        # Сообщение об ошибке
         if self.error_message:
             safe_addstr(self.stdscr, start_y + line, 10, self.error_message, curses.color_pair(5))
             line += 2
 
-        # Путь назначения при успехе
         if self.copy_success and self.dest_file:
             safe_addstr(self.stdscr, start_y + line, 10, "Скопирован в:", curses.A_BOLD)
             line += 1
@@ -116,16 +104,13 @@ class LicenseConfirmScreen(BaseScreen):
             safe_addstr(self.stdscr, start_y + line, 12, dest_display)
 
     def handle_input(self):
-        # При первом входе выполняем копирование
         if not self.operation_done:
             self.perform_copy()
         return super().handle_input()
 
     def handle_action(self, action):
         if action == "continue":
-            # Переход к следующему шагу (замените на нужный экран)
-            self.app.switch_screen("components_selection")
-            return None
+            return "next"
         elif action == "exit":
             return "exit"
         return None

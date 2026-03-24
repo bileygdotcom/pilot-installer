@@ -47,17 +47,22 @@ class StackStartScreen(BaseScreen):
 
     def on_enter(self):
         self.compose_dir = getattr(self.app, 'compose_dir', None)
-        self.status = "Готов"
-        self.images = []
-        self.current_image_index = 0
-        self.running = False
-        self.started = False
-        self.update_spinner = False
-        self.buttons = [
-            Button(0, "[ Запустить ]", "start", enabled=True),
-            Button(1, "[ Выход ]", "exit", enabled=True)
-        ]
-        self.needs_redraw = True
+        if not self.compose_dir:
+            self.status = "Ошибка: не найдена папка стека"
+            self.needs_redraw = True
+            return
+        else:
+            self.status = "Готов"
+            self.images = []
+            self.current_image_index = 0
+            self.running = False
+            self.started = False
+            self.update_spinner = False
+            self.buttons = [
+                Button(0, "[ Запустить ]", "start", enabled=True),
+                Button(1, "[ Выход ]", "exit", enabled=True)
+            ]
+            self.needs_redraw = True
 
     def draw_instructions(self):
         pass

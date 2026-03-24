@@ -6,11 +6,9 @@ import os
 from screens.base_screen import BaseScreen
 from components.ui import Button
 from utils.terminal import safe_addstr
+from utils.compose_builder import build_compose, write_compose_file
 
 class ComposeCreatedScreen(BaseScreen):
-    """
-    Экран, сообщающий об успешном создании файла docker-compose.yml.
-    """
     def __init__(self, stdscr, app):
         super().__init__(stdscr, app)
         self.compose_path = None
@@ -21,47 +19,41 @@ class ComposeCreatedScreen(BaseScreen):
         self.current_button = 0
 
     def on_enter(self):
-        """При входе получаем путь к compose-файлу из app"""
-        self.compose_path = getattr(self.app, 'compose_dir', None)
-        if self.compose_path:
-            self.compose_path = os.path.join(self.compose_path, 'docker-compose.yml')
+        stack_path = getattr(self.app, 'stack_path', None)
+        if not stack_path:
+            self.status = "Ошибка: путь стека не определён"
+            self.needs_redraw = True
+            return
+        # Генерируем compose
+        compose_dict = build_compose(self.app)
+        write_compose_file(compose_dict, stack_path)
+        self.compose_path = os.path.join(stack_path, 'docker-compose.yml')
+        self.app.compose_dir = stack_path   # здесь добавляется 
         self.needs_redraw = True
-
-    def draw_instructions(self):
-        pass
 
     def draw_content(self):
         title = " ФАЙЛ СОЗДАН "
         x = max(0, (self.width - len(title)) // 2)
         safe_addstr(self.stdscr, 4, x, title, curses.color_pair(3) | curses.A_BOLD)
 
-        start_y = 7
-
         if self.compose_path and os.path.exists(self.compose_path):
             msg1 = "Файл docker-compose.yml успешно создан:"
-            safe_addstr(self.stdscr, start_y, 4, msg1)
-
-            # Отображаем путь (обрезаем, если слишком длинный)
+            safe_addstr(self.stdscr, 7, 4, msg1)
             path_display = self.compose_path
             if len(path_display) > self.width - 10:
                 path_display = "..." + path_display[-(self.width-13):]
-            safe_addstr(self.stdscr, start_y + 1, 4, path_display, curses.A_BOLD)
-
-            msg2 = "Теперь можно перейти к запуску стека."
-            safe_addstr(self.stdscr, start_y + 3, 4, msg2)
+            safe_addstr(self.stdscr, 8, 4, path_display, curses.A_BOLD)
+            safe_addstr(self.stdscr, 10, 4, "Теперь можно перейти к запуску стека.")
         else:
-            safe_addstr(self.stdscr, start_y, 4, "Ошибка: файл не найден.", curses.color_pair(5))
+            safe_addstr(self.stdscr, 7, 4, "Ошибка: файл не найден.", curses.color_pair(5))
 
-        # Инструкция (минимальная)
         instr = "Для продолжения нажмите 'Далее'"
         x = max(0, (self.width - len(instr)) // 2)
         safe_addstr(self.stdscr, self.height - 3, x, instr, curses.color_pair(4))
 
     def handle_action(self, action):
         if action == "continue":
-            # Переход к следующему экрану
-            self.app.switch_screen("stack_start")
-            return None
+            return "next"
         elif action == "exit":
             return "exit"
         return None

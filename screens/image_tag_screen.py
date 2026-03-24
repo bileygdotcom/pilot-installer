@@ -272,7 +272,7 @@ class ImageTagScreen(BaseScreen):
             else:
                 self.app.image_tag = self.options[self.selected_option]
             # Переход на выбор папки
-            self.app.switch_screen("folder_picker")
+            self.app.switch_screen("compose_created")
             return None
         elif action == "exit":
             return "exit"
