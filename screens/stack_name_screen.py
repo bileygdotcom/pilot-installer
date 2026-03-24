@@ -41,13 +41,22 @@ class StackNameScreen(BaseScreen):
 
     def create_stack_dirs(self):
         """Создаёт структуру папок стека"""
-        base = "/usr/ascon"
+        base = "/usr/share/ascon"
         stack_path = os.path.join(base, self.stack_name)
         try:
             os.makedirs(stack_path, exist_ok=True)
             # Создаём подпапки
             for subdir in ['license', 'databases', 'logs', '.aspnet', 'settings']:
                 os.makedirs(os.path.join(stack_path, subdir), exist_ok=True)
+            # Создаём вложенную структуру для лицензии
+            license_sub = os.path.join(stack_path, 'license', 'Pilot Server', 'License')
+            os.makedirs(license_sub, exist_ok=True)
+            # Создаём папку для настроек pilot-server
+            settings_dir = os.path.join(stack_path, 'pilot-server', 'settings')
+            os.makedirs(settings_dir, exist_ok=True)
+            settings_file = os.path.join(settings_dir, 'settings.xml')
+            with open(settings_file, 'w') as f:
+                f.write('<Configuration></Configuration>')
             self.app.stack_path = stack_path
             return True
         except Exception as e:

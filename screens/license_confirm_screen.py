@@ -41,7 +41,7 @@ class LicenseConfirmScreen(BaseScreen):
             self.needs_redraw = True
             return
 
-        self.dest_dir = os.path.join(stack_path, "license")
+        self.dest_dir = os.path.join(stack_path, "license", "Pilot Server", "License")
         self.perform_copy()
 
     def perform_copy(self):

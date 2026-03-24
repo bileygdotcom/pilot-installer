@@ -28,6 +28,7 @@ class ComposeCreatedScreen(BaseScreen):
         compose_dict = build_compose(self.app)
         write_compose_file(compose_dict, stack_path)
         self.compose_path = os.path.join(stack_path, 'docker-compose.yml')
+        self.app.compose_dir = stack_path   # здесь добавляется 
         self.needs_redraw = True
 
     def draw_content(self):
