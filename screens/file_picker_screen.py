@@ -16,7 +16,7 @@ class FilePickerScreen(BaseScreen):
     def __init__(self, stdscr, app, start_path=None, filter_extensions=None, title="Выберите файл"):
         super().__init__(stdscr, app)
         self.title = title
-        self.filter_extensions = filter_extensions   # ожидаем список расширений с точкой, например ['.lic', '.pilotlic']
+        self.filter_extensions = filter_extensions   # список расширений, например ['.lic', '.pilotlic']
         self.start_path = start_path or os.path.expanduser("~")
         self.current_path = os.path.abspath(self.start_path)
         self.files = []          # список имён файлов/папок
@@ -39,7 +39,6 @@ class FilePickerScreen(BaseScreen):
         self.load_files()
 
     def load_files(self):
-        """Загружает список файлов и папок из current_path с учётом фильтра"""
         try:
             entries = os.listdir(self.current_path)
         except PermissionError:
@@ -57,7 +56,6 @@ class FilePickerScreen(BaseScreen):
                 if os.path.isdir(full):
                     dirs.append(entry)
                 else:
-                    # Если задан фильтр расширений, проверяем
                     if self.filter_extensions is not None:
                         ext = os.path.splitext(entry)[1].lower()
                         if ext in self.filter_extensions:
@@ -86,74 +84,59 @@ class FilePickerScreen(BaseScreen):
         self._update_select_button_state()
 
     def _update_select_button_state(self):
-        """Обновляет состояние кнопки 'Установить лицензию' в зависимости от выбранного элемента"""
         if self.files and not self.is_dir[self.selected_index]:
             self.buttons[0].enabled = True
         else:
             self.buttons[0].enabled = False
 
     def _adjust_scroll(self):
-        """Корректирует смещение прокрутки, чтобы выделенный элемент был видим"""
         if not self.files:
             self.scroll_offset = 0
             return
-
         list_height = self._get_list_height()
         if list_height < 1:
             list_height = 1
-
         if self.selected_index < self.scroll_offset:
             self.scroll_offset = self.selected_index
         elif self.selected_index >= self.scroll_offset + list_height:
             self.scroll_offset = self.selected_index - list_height + 1
 
     def _get_list_height(self):
-        """Доступная высота для списка файлов"""
         return max(1, self.height - 13)
 
     def draw_instructions(self):
-        """Отключаем стандартные инструкции BaseScreen, рисуем свои в draw_content"""
         pass
 
     def draw_content(self):
-        """Отрисовывает содержимое экрана"""
-        # Подзаголовок (опускаем ниже основного заголовка)
         x = max(0, (self.width - len(self.title)) // 2)
         safe_addstr(self.stdscr, 3, x, self.title, curses.color_pair(3) | curses.A_BOLD)
 
-        # Текущий путь
         path_display = self.current_path
         if len(path_display) > self.width - 10:
             path_display = "..." + path_display[-(self.width-13):]
-        safe_addstr(self.stdscr, 5, 4, "Путь: " + path_display)
+        safe_addstr(self.stdscr, 4, 4, "Путь: " + path_display)
 
-        # Список файлов
-        list_start_y = 7
+        list_start_y = 5
         list_height = self._get_list_height()
         end_idx = min(len(self.files), self.scroll_offset + list_height)
 
-        if self.files:
-            for i in range(self.scroll_offset, end_idx):
-                y = list_start_y + (i - self.scroll_offset)
-                if y >= self.height - 8:  # оставляем место для информации и инструкции
-                    break
-                prefix = "📁 " if self.is_dir[i] else "📄 "
-                filename = self.files[i]
-                max_len = self.width - 6
-                if len(filename) > max_len:
-                    filename = filename[:max_len-3] + "..."
-                attr = curses.A_REVERSE if i == self.selected_index else 0
-                safe_addstr(self.stdscr, y, 4, prefix + filename, attr)
+        for i in range(self.scroll_offset, end_idx):
+            y = list_start_y + (i - self.scroll_offset)
+            if y >= self.height - 7:
+                break
+            prefix = "📁 " if self.is_dir[i] else "📄 "
+            filename = self.files[i]
+            max_len = self.width - 6
+            if len(filename) > max_len:
+                filename = filename[:max_len-3] + "..."
+            attr = curses.A_REVERSE if i == self.selected_index else 0
+            safe_addstr(self.stdscr, y, 4, prefix + filename, attr)
 
-            # Индикаторы прокрутки
-            if self.scroll_offset > 0:
-                safe_addstr(self.stdscr, list_start_y - 1, 4, "↑ ...")
-            if end_idx < len(self.files):
-                safe_addstr(self.stdscr, list_start_y + list_height, 4, "↓ ...")
-        else:
-            safe_addstr(self.stdscr, list_start_y, 4, "(пусто)")
+        if self.scroll_offset > 0:
+            safe_addstr(self.stdscr, list_start_y - 1, 4, "↑ ...")
+        if end_idx < len(self.files):
+            safe_addstr(self.stdscr, list_start_y + list_height, 4, "↓ ...")
 
-        # Информация о выбранном файле (если это файл)
         if self.files and not self.is_dir[self.selected_index]:
             full_path = os.path.join(self.current_path, self.files[self.selected_index])
             try:
@@ -166,18 +149,15 @@ class FilePickerScreen(BaseScreen):
             except:
                 pass
 
-        # Сообщение (ошибка/предупреждение)
         if self.message:
             safe_addstr(self.stdscr, self.height - 6, 4, self.message, curses.color_pair(5))
 
-        # Инструкция (выводим выше кнопок, на строке self.height - 5)
-        instr = "↑↓: выбор | Enter: открыть папку / выбрать файл | Backspace: назад"
+        instr = "↑↓: выбор | Enter: открыть папку / выбрать файл | Backspace: назад | TAB: переключение на кнопки"
         if len(instr) > self.width:
             instr = instr[:self.width-4] + "..."
         safe_addstr(self.stdscr, self.height - 5, 4, instr, curses.color_pair(4))
 
     def _format_size(self, size):
-        """Форматирует размер файла в человекочитаемый вид"""
         for unit in ['B', 'KB', 'MB', 'GB']:
             if size < 1024:
                 return f"{size:.1f} {unit}"
@@ -185,12 +165,10 @@ class FilePickerScreen(BaseScreen):
         return f"{size:.1f} TB"
 
     def handle_mouse(self):
-        """Обрабатывает события мыши: клики по списку и по кнопкам"""
         try:
             _, mx, my, _, bstate = curses.getmouse()
             current_time = time.time()
 
-            # 1. Проверяем кнопки
             button_positions = self.get_button_positions()
             for i, pos in enumerate(button_positions):
                 if my == pos['y'] and pos['x1'] <= mx <= pos['x2']:
@@ -202,29 +180,22 @@ class FilePickerScreen(BaseScreen):
                             return self.buttons[i].action
                     return None
 
-            # 2. Если не кнопки, проверяем клик в области списка
-            list_start_y = 7
+            list_start_y = 5
             list_height = self._get_list_height()
             list_end_y = list_start_y + list_height
-
             if list_start_y <= my < list_end_y and self.files:
                 index = self.scroll_offset + (my - list_start_y)
                 if 0 <= index < len(self.files):
-                    # Защита от повторных событий
                     if current_time - self._last_click_time < 0.1 and index == self._last_click_index:
                         return None
                     self._last_click_time = current_time
                     self._last_click_index = index
-
                     if bstate & (curses.BUTTON1_CLICKED | curses.BUTTON1_DOUBLE_CLICKED):
-                        # Одиночный клик: выделяем элемент
                         self.selected_index = index
                         self._update_select_button_state()
                         self.needs_redraw = True
-                        # Двойной клик по папке или файлу
                         if bstate & curses.BUTTON1_DOUBLE_CLICKED:
                             if self.is_dir[index]:
-                                # Переход в папку
                                 folder = self.files[index]
                                 full = os.path.join(self.current_path, folder)
                                 try:
@@ -236,13 +207,12 @@ class FilePickerScreen(BaseScreen):
                                     self.message = "Нет доступа"
                                 self.needs_redraw = True
                             else:
-                                # Выбор файла
                                 if self.buttons[0].enabled:
                                     self.app.license_file_path = os.path.join(self.current_path, self.files[index])
                                     return self.handle_action("select")
-            return None
         except:
-            return None
+            pass
+        return None
 
     def handle_input(self):
         self.handle_resize()
@@ -288,7 +258,6 @@ class FilePickerScreen(BaseScreen):
                 selected = self.files[self.selected_index]
                 full = os.path.join(self.current_path, selected)
                 if self.is_dir[self.selected_index]:
-                    # Переход в папку
                     try:
                         self.current_path = full
                         self.load_files()
@@ -298,11 +267,10 @@ class FilePickerScreen(BaseScreen):
                         self.message = "Нет доступа"
                     self.needs_redraw = True
                 else:
-                    # Выбор файла
                     if self.buttons[0].enabled:
                         self.app.license_file_path = full
                         return self.handle_action("select")
-        elif key in (127, curses.KEY_BACKSPACE, 8):  # Backspace
+        elif key in (127, curses.KEY_BACKSPACE, 8):
             parent = os.path.dirname(self.current_path)
             if parent and parent != self.current_path:
                 self.current_path = parent
@@ -318,6 +286,7 @@ class FilePickerScreen(BaseScreen):
             return "back"
         elif action == "select":
             if self.files and not self.is_dir[self.selected_index]:
+                # путь уже сохранён в self.app.license_file_path в _handle_list_keys или handle_mouse
                 return "next"
         return None
 
